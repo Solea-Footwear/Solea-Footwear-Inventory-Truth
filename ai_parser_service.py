@@ -109,6 +109,7 @@ class AIParserService:
             logger.debug(f"Parsed data: {json.dumps(parsed_data, indent=2)}")
 
             parsed_data = self._apply_shoe_size_category_overrides(parsed_data, listing_data)
+            parsed_data = self._apply_condition_overrides(parsed_data, listing_data)
             logger.debug(f"Post-override parsed data: {json.dumps(parsed_data, indent=2)}")
             
             return parsed_data
@@ -117,6 +118,44 @@ class AIParserService:
             logger.error(f"Error parsing with AI: {e}")
             # Return fallback structure
             return self._create_fallback_data(listing_data)
+
+    def _map_ebay_condition_to_poshmark(self, ebay_condition: str) -> str:
+        condition = (ebay_condition or '').strip().lower()
+
+        if 'new with box' in condition:
+            return 'New With Tags (NWT)'
+
+        if 'new without box' in condition:
+            return 'New Without Tags (NWOT)'
+
+        if 'new with defects' in condition:
+            return 'Like New'
+
+        if condition == 'new' or condition.startswith('new '):
+            return 'New Without Tags (NWOT)'
+
+        if 'excellent' in condition:
+            return 'Like New'
+
+        if 'good' in condition:
+            return 'Good'
+
+        if 'fair' in condition:
+            return 'Fair'
+
+        return 'Good'
+
+    def _apply_condition_overrides(self, parsed_data: Dict, listing_data: Dict) -> Dict:
+        ebay_condition = listing_data.get('ebay_condition', '')
+        poshmark_condition = self._map_ebay_condition_to_poshmark(ebay_condition)
+
+        parsed_data.setdefault('poshmark', {})
+        parsed_data.setdefault('category_data', {})
+
+        parsed_data['poshmark']['condition'] = poshmark_condition
+        parsed_data['category_data']['condition'] = poshmark_condition
+
+        return parsed_data
     
     def _apply_shoe_size_category_overrides(self, parsed_data: Dict, listing_data: Dict) -> Dict:
         """
