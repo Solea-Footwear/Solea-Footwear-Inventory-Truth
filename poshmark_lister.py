@@ -21,59 +21,58 @@ logger = logging.getLogger(__name__)
 
 # Style tag mapping - keywords in title → Poshmark style tags
 STYLE_TAG_MAP = {
-    'Retro': ['retro', 'vintage', 'classic', 'og', 'original', 'throwback'],
-    'Vintage': ['vintage', 'antique', '70s', '80s', '90s', 'y2k'],
-    '90s': ['90s', 'nineties'],
-    '80s': ['80s', 'eighties'],
-    'Y2K': ['y2k', '2000s'],
+    # Strong style / era signals first
+    'Vintage': ['vintage', '70s', '80s', '90s', 'y2k'],
+    'Retro': ['retro', 'classic', 'old school', 'throwback', 'og'],
 
-    'Activewear': ['athletic', 'sport', 'gym', 'training', 'performance', 'running', 'runner', 'basketball', 'tennis', 'cross training', 'cross-trainer'],
-    'Athleisure': ['athleisure', 'sporty', 'lifestyle'],
-    'Casual': ['casual', 'everyday', 'daily'],
+    # Shoe-specific style signals
+    'Platform': ['platform', 'platforms', 'stacked sole', 'thick sole'],
+    'Western': ['western', 'cowboy', 'cowgirl', 'roper'],
+    'Formal': ['dress shoe', 'dress shoes', 'oxford', 'oxfords', 'derby', 'derbies', 'loafer', 'loafers', 'wingtip', 'cap toe'],
 
-    'Streetwear': ['streetwear', 'street', 'urban', 'hype', 'skate', 'skater'],
-    'Minimalist': ['minimalist', 'minimal', 'simple', 'clean'],
-    'Luxury': ['luxury', 'premium', 'designer'],
+    # Brand-driven tags
+    'Luxury': [
+        'gucci', 'prada', 'louis vuitton', 'lv', 'burberry', 'balenciaga',
+        'saint laurent', 'ysl', 'valentino', 'versace', 'ferragamo',
+        'dolce', 'gabbana', 'givenchy', 'moncler', 'golden goose', 'alexander mcqueen'
+    ],
 
-    'Leather': ['leather', 'full grain', 'top grain'],
-    'Suede': ['suede', 'nubuck'],
-    'Mesh': ['mesh', 'breathable'],
-    'Knit': ['knit', 'knitted', 'woven', 'primeknit', 'flyknit'],
+    # Common lifestyle tags
+    'Streetwear': ['vans', 'converse', 'skate', 'skater', 'streetwear', 'street'],
+    'Activewear': ['running', 'runner', 'athletic', 'training', 'basketball', 'tennis', 'cross training', 'gym'],
+    'Outdoor': ['trail', 'hiking', 'hiker', 'outdoor', 'waterproof', 'gore-tex', 'gtx', 'bootie', 'snow', 'winter'],
 
-    'Chunky': ['chunky', 'thick', 'platform', 'dad shoe'],
-    'Lightweight': ['lightweight', 'light', 'ultralight'],
-    'Waterproof': ['waterproof', 'water-resistant', 'weatherproof', 'gore-tex', 'gtx'],
-
-    'Outdoor': ['trail', 'hiking', 'hiker', 'outdoor', 'terrain'],
-    'Workwear': ['work', 'workwear', 'utility', 'service'],
-    'Preppy': ['preppy', 'prep', 'ivy', 'collegiate'],
-    'Colorful': ['colorful', 'multicolor', 'rainbow', 'vibrant'],
-    'Neutral': ['neutral', 'beige', 'tan', 'cream', 'nude', 'taupe'],
+    # Default broad tag
+    'Casual': ['shoe', 'shoes', 'sneaker', 'sneakers', 'boot', 'boots', 'sandal', 'sandals', 'slip on', 'everyday', 'casual'],
 }
 
 def extract_style_tags_from_title(title: str, max_tags: int = 3) -> list:
-    """
-    Extract up to 3 style tags from title using keyword matching
-    
-    Args:
-        title: Product title string
-        max_tags: Maximum tags to return (Poshmark allows 3)
-    
-    Returns:
-        List of matched Poshmark style tag strings
-    """
     title_lower = title.lower()
     matched_tags = []
-    
+
     for tag, keywords in STYLE_TAG_MAP.items():
         if len(matched_tags) >= max_tags:
             break
-            
+
         for keyword in keywords:
             if keyword in title_lower:
-                matched_tags.append(tag)
-                break  # Move to next tag once matched
-    
+                if tag not in matched_tags:
+                    matched_tags.append(tag)
+                break
+
+    # Most shoes should include Casual
+    if 'Casual' not in matched_tags:
+        matched_tags.append('Casual')
+
+    # Fill remaining slots with broad selling tags
+    fallback_tags = ['Activewear', 'Streetwear', 'Outdoor']
+
+    for tag in fallback_tags:
+        if len(matched_tags) >= max_tags:
+            break
+        if tag not in matched_tags:
+            matched_tags.append(tag)
+
     return matched_tags[:max_tags]
 
 class PoshmarkLister:
