@@ -32,7 +32,7 @@ class AIParserService:
                     'level_3_women_shoes': ['Ankle Boots & Booties', 'Athletic Shoes', 'Combat & Moto Boots', 'Espadrilles', 'Flats & Loafers', 'Heeled Boots', 'Heels', 'Lace Up Boots', 'Moccasins', 'Mules & Clogs', 'Over the Knee Boots', 'Platforms', 'Sandals', 'Slippers', 'Sneakers', 'Wedges', 'Winter & Rain Boots', 'None'],
                     'level_3_kids_shoes': ['Baby & Walker', 'Boots', 'Dress Shoes', 'Moccasins', 'Rain & Snow Boots', 'Sandals & Flip Flops', 'Slippers', 'Sneakers', 'Water Shoes', 'None']
                 },
-                'conditions': ['New With Tags (NWT)', New Without Tags (NWOT), 'Like New', 'Good', 'Fair'],
+                'conditions': ['New With Tags (NWT)', 'New Without Tags (NWOT)', 'Like New', 'Good', 'Fair'],
                 'colors': ['Red', 'Pink', 'Orange', 'Yellow', 'Green', 'Blue', 'Purple', 'Gold', 'Silver', 'Black', 'Gray', 'White', 'Cream', 'Brown', 'Tan']
             },
             'mercari': {
@@ -441,7 +441,7 @@ class AIParserService:
 # - Kids > Shoes subcategories: {', '.join(self.platform_specs['poshmark']['categories']['level_3_kids_shoes'])}
 
 # Poshmark Conditions (EXACT TEXT): {', '.join(self.platform_specs['poshmark']['conditions'])}
-# Poshmark Colors (choose ONE): {', '.join(self.platform_specs['poshmark']['colors'])}
+# Poshmark Colors: Choose up to TWO colors when clearly present in the title. Return as a list.: {', '.join(self.platform_specs['poshmark']['colors'])}
 # Poshmark Sizes: Standard US sizes (4, 4.5, 5, 5.5... up to 16) OR custom text
 
 # MERCARI PLATFORM SPECS:
@@ -528,7 +528,7 @@ class AIParserService:
 #    - "Poor" / "For Parts" → Mercari: "ConditionPoor" (Poshmark doesn't have Poor)
 
 # 4. COLOR:
-#    - For Poshmark: Pick PRIMARY color from allowed list
+#    - For Poshmark: Pick up to TWO colors from the allowed list when clearly present. If only one is clear, return one.
 #    - For Mercari: Not needed (skip)
 
 # 5. BRAND:
@@ -546,7 +546,7 @@ class AIParserService:
 #     }},
 #     "condition": "Good",
 #     "size": "10.5",
-#     "color": "Red",
+#     "color": ["Black", "White"]
 #     "brand": "Nike"
 #   }},
 #   "mercari": {{
@@ -562,7 +562,7 @@ class AIParserService:
 #   "item_specifics": {{
 #     "Brand": "Nike",
 #     "Size": "10.5",
-#     "Color": "Red",
+#     "Color": ["Black", "White"],
 #     "Condition": "Good",
 #     "Department": "Men",
 #     "Style": "Sneakers"
@@ -606,7 +606,7 @@ Categories (3-level structure):
 - Kids > Shoes subcategories: {', '.join(self.platform_specs['poshmark']['categories']['level_3_kids_shoes'])}
 
 Poshmark Conditions (EXACT TEXT): {', '.join(self.platform_specs['poshmark']['conditions'])}
-Poshmark Colors (choose ONE): {', '.join(self.platform_specs['poshmark']['colors'])}
+Poshmark Colors: Choose up to TWO colors when clearly present in the title. Return as a list: {', '.join(self.platform_specs['poshmark']['colors'])}
 Poshmark Sizes: Standard US sizes (4, 4.5, 5, 5.5... up to 16) OR custom text
 
 MERCARI PLATFORM SPECS:
@@ -727,7 +727,7 @@ CRITICAL INSTRUCTIONS:
    - "Poor" / "For Parts" → Mercari: "ConditionPoor" (Poshmark doesn't have Poor)
 
 4. COLOR:
-   - For Poshmark: Pick PRIMARY color from allowed list
+   - For Poshmark: Pick up to TWO colors from the allowed list when clearly present. If only one is clear, return one.
    - For Mercari: Not needed (skip)
 
 5. BRAND:
@@ -745,7 +745,7 @@ Return ONLY this JSON structure (no other text):
     }},
     "condition": "Good",
     "size": "10.5",
-    "color": "Red",
+    "color": ["Black", "White"],
     "brand": "Nike"
   }},
   "mercari": {{
@@ -761,7 +761,7 @@ Return ONLY this JSON structure (no other text):
   "item_specifics": {{
     "Brand": "Nike",
     "Size": "10.5",
-    "Color": "Red",
+    "color": ["Black", "White"],
     "Condition": "Good",
     "Department": "Men",
     "Style": "Sneakers"
