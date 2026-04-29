@@ -5,6 +5,8 @@ Automates listing creation on Poshmark
 import logging
 import os
 import time
+import tempfile
+from PIL import Image
 from typing import Dict, List
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -183,6 +185,30 @@ class PoshmarkLister:
         except Exception as e:
             logger.error(f"Error initializing driver: {e}")
             return False
+
+    def _make_poshmark_cover_image(self, input_path: str) -> str:
+        """
+        Create a temporary 3:4 portrait cover image for Poshmark.
+        Keeps the full original image visible by adding white padding.
+        """
+        img = Image.open(input_path).convert("RGB")
+
+        target_w = 1200
+        target_h = 1600
+
+        img.thumbnail((target_w, target_h))
+
+        canvas = Image.new("RGB", (target_w, target_h), "white")
+        x = (target_w - img.width) // 2
+        y = (target_h - img.height) // 2
+        canvas.paste(img, (x, y))
+
+        temp_dir = tempfile.gettempdir()
+        base_name = os.path.basename(input_path)
+        output_path = os.path.join(temp_dir, f"poshmark_cover_{base_name}.jpg")
+
+        canvas.save(output_path, "JPEG", quality=95)
+        return output_path
     
     def _upload_images(self, image_paths: List[str]) -> bool:
         """Upload images to Poshmark"""
@@ -193,7 +219,13 @@ class PoshmarkLister:
             )
             
             # Upload all images at once (Poshmark accepts multiple)
-            all_paths = '\n'.join(image_paths[:16])  # Poshmark max 16 images
+            upload_paths = image_paths[:16]
+
+            if upload_paths:
+                cover_path = self._make_poshmark_cover_image(upload_paths[0])
+                upload_paths = [cover_path] + upload_paths[1:]
+
+            all_paths = '\n'.join(upload_paths)
             file_input.send_keys(all_paths)
             
             # Wait for upload to complete
