@@ -220,30 +220,30 @@ class AIParserService:
 
         return ''
 
-def _normalize_size_for_marketplaces(self, raw_size: str) -> str:
-    """
-    Keep kids sizes with suffixes:
-    - 6.5Y stays 6.5Y
-    - 13C stays 13C
-    - 10M becomes 10
-    - 8W stays 8W because W may mean wide
-    """
-    if not raw_size:
-        return ''
+    def _normalize_size_for_marketplaces(self, raw_size: str) -> str:
+        """
+        Keep kids sizes with suffixes:
+        - 6.5Y stays 6.5Y
+        - 13C stays 13C
+        - 10M becomes 10
+        - 8W stays 8W because W may mean wide
+        """
+        if not raw_size:
+            return ''
 
-    cleaned = raw_size.strip().upper().replace(' ', '')
+        cleaned = raw_size.strip().upper().replace(' ', '')
 
-    # Normalize toddler markers to C
-    cleaned = re.sub(r'(TD|T)$', 'C', cleaned)
+        # Normalize toddler markers to C
+        cleaned = re.sub(r'(TD|T)$', 'C', cleaned)
 
-    # Preserve youth/child suffixes
-    if re.match(r'^\d{1,2}(?:\.\d)?[YC]$', cleaned):
+        # Preserve youth/child suffixes
+        if re.match(r'^\d{1,2}(?:\.\d)?[YC]$', cleaned):
+            return cleaned
+
+        # Remove men's marker only
+        cleaned = re.sub(r'M$', '', cleaned).strip()
+
         return cleaned
-
-    # Remove men's marker only
-    cleaned = re.sub(r'M$', '', cleaned).strip()
-
-    return cleaned
 
     def _detect_size_type(self, title: str, ebay_category: str, raw_size: str) -> str:
         """
@@ -320,12 +320,24 @@ def _normalize_size_for_marketplaces(self, raw_size: str) -> str:
 
     def _mercari_kids_age_bucket(self, normalized_size: str, kids_gender: str) -> str:
         """
-        Map kids numeric size to Mercari's exact level_3 buckets.
+        Map kids shoe size to Mercari's exact level_3 buckets.
+        Y sizes should usually be Boys/Girls (4+).
+        C/T toddler-child sizes should usually be Boys/Girls 2T-5T.
         """
         prefix = 'Girls' if kids_gender == 'girls' else 'Boys'
 
+        size_text = (normalized_size or '').upper().strip()
+
+        if size_text.endswith('Y'):
+            return f'{prefix} (4+)'
+
+        if size_text.endswith('C'):
+            return f'{prefix} 2T-5T'
+
+        number_only = re.sub(r'[^0-9.]', '', size_text)
+
         try:
-            size_val = float(normalized_size)
+            size_val = float(number_only)
         except (TypeError, ValueError):
             return f'{prefix} (4+)'
 
@@ -411,14 +423,25 @@ def _normalize_size_for_marketplaces(self, raw_size: str) -> str:
 #   IF Women > Shoes → Use format "US (EU)":
 #     Available: 4 (35), 4.5 (35), 5 (35.5), 5.5 (36), 6 (36.5), 6.5 (37), 7 (37.5), 7.5 (38), 8 (38.5), 8.5 (39), 9 (39.5), 9.5 (40), 10 (40.5), 10.5 (41), 11 (41.5), 11.5 (42), 12 (42.5), 12.5 (43), 13 (43.5), 13.5 (44), 14 & Up (44.5), 3.5 and below
   
-#   IF Kids > Boys shoes OR Kids > Girls shoes → Use ONLY number (NO EU):
-#     Available: 0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13, 13.5
+#   IF Kids > Boys shoes OR Kids > Girls shoes → Preserve youth/child suffixes when present:
+#       Examples:
+#       4Y
+#       4.5Y
+#       6Y
+#       10C
+#       10.5C
+#       13C
+
+#       If no suffix is present, use numeric size only.
+#       Never convert 4Y into 4.
+#       Never convert 13C into 13.
 
 # CRITICAL: Check the category level_1 and level_2 to determine which size format to use!
 
 # 2. SIZE EXTRACTION:
-#    - Remove suffixes: "6.5Y" → "6.5", "10M" → "10", "8W" → "8"
-#    - For Poshmark: Just the number (e.g., "10.5")
+#    - Remove suffixes: "6.5Y" → "6.5Y", "10M" → "10", "8W" → "8"
+#    - For Poshmark adult sizes: use just the number.
+#    - For Poshmark kids sizes: preserve suffixes like 4Y, 6.5Y, 10C, and 13C when present.
 #    - For Mercari: Format depends on category:
    
 #    **MEN'S SHOES** - Format "US (EU)":
@@ -433,13 +456,13 @@ def _normalize_size_for_marketplaces(self, raw_size: str) -> str:
 #    11.5 (42), 12 (42.5), 12.5 (43), 13 (43.5), 13.5 (44), 14 & Up (44.5)
    
    
-#    **KIDS sHOES (Boys/Girls)** - Format: Just number (NO EU):
+#    **KIDS SHOES (Boys/Girls)** - Format: Just number (NO EU):
 #    0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 
 #    9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13, 13.5
    
 #    **CRITICAL RULES:**
 #    - If category is Men/Women + Shoes → Use "US (EU)" format
-#    - If category is Kids + (Boys Shoes OR Girls Shoes) → Use ONLY the number
+#    - If category is Kids + (Boys Shoes OR Girls Shoes) → Preserve Y/C suffixes when present, such as 4Y, 6.5Y, 13C
 #    - Match the EXACT format from the tables above
 
 # CRITICAL INSTRUCTIONS:
@@ -451,9 +474,11 @@ def _normalize_size_for_marketplaces(self, raw_size: str) -> str:
 #    - For Mercari Kids: Use "Boys shoes" or "Girls shoes" then age subcategory
 
 # 2. SIZE EXTRACTION:
-#    - Normalize kids/adult markers carefully: "6.5Y" → "6.5" only after recognizing it is youth/kids, "13C" → "13" only after recognizing it is child/kids, "10M" may mean men's, and "8W" may mean wide so do NOT assume W always means women's
-#    - For Poshmark: Just the number (e.g., "10.5")
-#    - For Mercari: Format "US (EU)" (e.g., "10.5 (43.5)")
+#    - Normalize kids/adult markers carefully: "6.5Y" → "6.5Y" only after recognizing it is youth/kids, "13C" → "13C" only after recognizing it is child/kids, "10M" may mean men's, and "8W" may mean wide so do NOT assume W always means women's
+#    - For Poshmark adult sizes: use just the number.
+#    - For Poshmark kids sizes: preserve suffixes like 4Y, 6.5Y, 10C, and 13C when present.
+#    - For Mercari Adult Men/Women Shoes: use "US (EU)" format
+#    - For Mercari Kids Shoes: preserve kids size codes like 4Y, 6.5Y, 13C
 #    - Common conversions: 10=43, 10.5=43.5, 11=44, 11.5=44.5, 12=45, etc.
 
 # 3. CONDITION MAPPING:
@@ -508,7 +533,7 @@ def _normalize_size_for_marketplaces(self, raw_size: str) -> str:
 # IMPORTANT:
 # - Use EXACT category names from the lists provided
 # - Use EXACT condition values (Poshmark: full text, Mercari: data-testid)
-# - Size must be clean number for Poshmark, "US (EU)" format for Mercari
+# - Adult size should be clean number for Poshmark and "US (EU)" for Mercari. Kids sizes should preserve suffixes like 4Y, 6.5Y, 13C, and 10C when available.
 # - If unsure about a field, use "Other" for categories or best guess
 # - Brand should match exactly what's in eBay catalog data
 # """
@@ -562,15 +587,25 @@ Mercari Sizes (CATEGORY-SPECIFIC - VERY IMPORTANT):
   
   IF Women > Shoes → Use format "US (EU)":
     Available: 4 (35), 4.5 (35), 5 (35.5), 5.5 (36), 6 (36.5), 6.5 (37), 7 (37.5), 7.5 (38), 8 (38.5), 8.5 (39), 9 (39.5), 9.5 (40), 10 (40.5), 10.5 (41), 11 (41.5), 11.5 (42), 12 (42.5), 12.5 (43), 13 (43.5), 13.5 (44), 14 & Up (44.5), 3.5 and below
-  
-  IF Kids > Boys shoes OR Kids > Girls shoes → Use ONLY number (NO EU):
-    Available: 0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13, 13.5
+  IF Kids > Boys shoes OR Kids > Girls shoes → Preserve youth/child suffixes when present:
+  Examples:
+  4Y
+  4.5Y
+  6Y
+  10C
+  10.5C
+  13C
+
+If no suffix is present, use numeric size only.
+Never convert 4Y into 4.
+Never convert 13C into 13.
 
 CRITICAL: Check the category level_1 and level_2 to determine which size format to use!
 
 2. SIZE EXTRACTION:
-   - Normalize kids/adult markers carefully: "6.5Y" → "6.5" only after recognizing it is youth/kids, "13C" → "13" only after recognizing it is child/kids, "10M" may mean men's, and "8W" may mean wide so do NOT assume W always means women's
-   - For Poshmark: Just the number (e.g., "10.5")
+   - Normalize kids/adult markers carefully: "6.5Y" → "6.5Y" only after recognizing it is youth/kids, "13C" → "13C" only after recognizing it is child/kids, "10M" may mean men's, and "8W" may mean wide so do NOT assume W always means women's
+   - For Poshmark adult sizes: use just the number.
+   - For Poshmark kids sizes: preserve suffixes like 4Y, 6.5Y, 10C, and 13C when present.
    - For Mercari: Format depends on category:
    
    **MEN'S SHOES** - Format "US (EU)":
@@ -585,13 +620,22 @@ CRITICAL: Check the category level_1 and level_2 to determine which size format 
    11.5 (42), 12 (42.5), 12.5 (43), 13 (43.5), 13.5 (44), 14 & Up (44.5)
    
    
-   **KIDS sHOES (Boys/Girls)** - Format: Just number (NO EU):
-   0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 
-   9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13, 13.5
+   **KIDS SHOES (Boys/Girls)** - Format:
+    Preserve suffixes when known.
+
+    Examples:
+    4Y
+    5Y
+    6.5Y
+    10C
+    12C
+    13C
+
+    If suffix unknown, use numeric only.
    
    **CRITICAL RULES:**
    - If category is Men/Women + Shoes → Use "US (EU)" format
-   - If category is Kids + (Boys Shoes OR Girls Shoes) → Use ONLY the number
+   - If category is Kids + (Boys Shoes OR Girls Shoes) → Preserve Y/C suffixes when present, such as 4Y, 6.5Y, 10C, 13C
    - Match the EXACT format from the tables above
 
 CRITICAL INSTRUCTIONS:
@@ -626,9 +670,13 @@ CRITICAL INSTRUCTIONS:
    - NEVER invent category names not in the provided lists
 
 2. SIZE EXTRACTION:
-   - Remove suffixes: "6.5Y" → "6.5", "10M" → "10", "8W" → "8"
-   - For Poshmark: Just the number (e.g., "10.5")
-   - For Mercari: Format "US (EU)" (e.g., "10.5 (43.5)")
+   - Preserve kids suffixes: "6.5Y" → "6.5Y", "13C" → "13C"
+   - Remove adult men's marker only when clear: "10M" → "10"
+   - Do not remove W automatically because "8W" may mean wide
+   - For Poshmark adult sizes: use just the number.
+   - For Poshmark kids sizes: preserve suffixes like 4Y, 6.5Y, 10C, and 13C when present.
+   - For Mercari Adult Men/Women Shoes: use "US (EU)" format
+   - For Mercari Kids Shoes: preserve kids size codes like 4Y, 6.5Y, 13C
    - Common conversions: 10=43, 10.5=43.5, 11=44, 11.5=44.5, 12=45, etc.
 
 3. CONDITION MAPPING:
@@ -683,8 +731,8 @@ Return ONLY this JSON structure (no other text):
 
 IMPORTANT:
 - Use EXACT category names from the lists provided
-- Use EXACT condition values (Poshmark: full text, Mercari: data-testid)
-- Size must be clean number for Poshmark, "US (EU)" format for Mercari
+- Use EXACT condition values (Poshmark: full text, Mercari: data-testid) 
+- Adult size should be clean number for Poshmark and "US (EU)" for Mercari. Kids sizes should preserve suffixes like 4Y, 6.5Y, 13C, and 10C when available.
 - If unsure about a field, use "Other" for categories or best guess
 - Brand should match exactly what's in eBay catalog data
 """
