@@ -262,7 +262,11 @@ class PoshmarkLister:
             desc_input.clear()
             # desc_input.send_keys(listing_data['description'][:500])
             hardcoded_description = """
-Please Review All Photos For An Accurate Depiction. Any scuff marks and wear that may be present on the shoes will be visible in the pictures. To get a complete view of the shoes, please see all of the pictures. Some of the items will have wear that does not appear in every image of the shoes. To receive the best insight into the shoes, please refer to all photos because if there is any wear, it will be made clear in the other photos. If you have any questions, feel free to reach out to us.
+Please review all photos carefully for condition and overall appearance.
+
+Any wear, marks, creasing, or signs of prior use will be shown in the photos. We provide close up photos for hard to see flaws.
+
+Please feel free to message us with any questions before purchasing. Thanks!
             """
             desc_input.send_keys(hardcoded_description)
             
