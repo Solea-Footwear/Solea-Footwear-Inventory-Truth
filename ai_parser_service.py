@@ -220,17 +220,30 @@ class AIParserService:
 
         return ''
 
-    def _normalize_size_for_marketplaces(self, raw_size: str) -> str:
-        """
-        Convert 6.5Y -> 6.5, 13C -> 13, 10M -> 10
-        Leaves 8W alone because W may mean wide.
-        """
-        if not raw_size:
-            return ''
+def _normalize_size_for_marketplaces(self, raw_size: str) -> str:
+    """
+    Keep kids sizes with suffixes:
+    - 6.5Y stays 6.5Y
+    - 13C stays 13C
+    - 10M becomes 10
+    - 8W stays 8W because W may mean wide
+    """
+    if not raw_size:
+        return ''
 
-        cleaned = raw_size.strip().upper().replace(' ', '')
-        cleaned = re.sub(r'(TD|T|Y|C|M)$', '', cleaned).strip()
+    cleaned = raw_size.strip().upper().replace(' ', '')
+
+    # Normalize toddler markers to C
+    cleaned = re.sub(r'(TD|T)$', 'C', cleaned)
+
+    # Preserve youth/child suffixes
+    if re.match(r'^\d{1,2}(?:\.\d)?[YC]$', cleaned):
         return cleaned
+
+    # Remove men's marker only
+    cleaned = re.sub(r'M$', '', cleaned).strip()
+
+    return cleaned
 
     def _detect_size_type(self, title: str, ebay_category: str, raw_size: str) -> str:
         """
