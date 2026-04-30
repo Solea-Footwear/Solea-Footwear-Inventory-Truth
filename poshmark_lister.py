@@ -14,6 +14,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.keys import Keys
 from webdriver_manager.chrome import ChromeDriverManager
 
 logger = logging.getLogger(__name__)
@@ -339,9 +340,22 @@ Please feel free to message us with any questions before purchasing. Thanks!
                     # Click level 3 (Sneakers/Boots/etc) - it opens automatically
                     # time.sleep(1)
                     # level_3_elem = self.driver.find_element(By.XPATH, f"//a[contains(text(), '{level_3}')]")
-                    level_3_elem = WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.XPATH, f"//a[contains(text(), '{level_3}')]")))
-                    level_3_elem.click()
+                    try:
+                        level_3_elem = WebDriverWait(self.driver, 10).until(
+                            EC.element_to_be_clickable(
+                                (By.XPATH, f"//*[normalize-space()='{level_3}']")
+                            )
+                        )
+                        level_3_elem.click()
+                    except Exception:
+                        logger.warning(f"Could not click level_3 '{level_3}', defaulting to Sneakers")
+
+                        fallback_elem = WebDriverWait(self.driver, 10).until(
+                            EC.element_to_be_clickable(
+                                (By.XPATH, "//*[normalize-space()='Sneakers']")
+                            )
+                        )
+                        fallback_elem.click()
                     # time.sleep(1)
                     
                     logger.info(f"✓ Set category: {level_1} > {level_2} > {level_3}")
@@ -447,46 +461,46 @@ Please feel free to message us with any questions before purchasing. Thanks!
             # STYLE TAGS (up to 3 tags)
             # ============================================
             try:
-                # Extract style tags from title
                 title = listing_data.get('title', '')
                 style_tags = extract_style_tags_from_title(title, max_tags=3)
 
                 print("here are style tags")
                 print(style_tags)
-                
+
                 if style_tags:
                     logger.info(f"Setting style tags: {style_tags}")
-                    
-                    # Click the style tag input field
+
                     style_input = WebDriverWait(self.driver, 10).until(
                         EC.element_to_be_clickable((By.CSS_SELECTOR, '[data-vv-name="style-tag-input"]'))
                     )
-                    
-                    # Type each tag and click the matching dropdown option
+
                     for tag in style_tags:
-                        # Clear and type the tag name
-                        style_input.clear()
-                        style_input.send_keys(tag)
-                        time.sleep(1)
-                        
-                        # Wait for dropdown to appear and click the matching tag
-                        tag_option_xpath = f"//div[@data-et-name='{tag}']"
                         try:
-                            tag_option = WebDriverWait(self.driver, 5).until(
-                                EC.element_to_be_clickable((By.XPATH, tag_option_xpath))
-                            )
-                            tag_option.click()
+                            style_input.clear()
+                            style_input.send_keys(tag)
+                            time.sleep(1)
+
+                            try:
+                                tag_option = WebDriverWait(self.driver, 5).until(
+                                    EC.element_to_be_clickable(
+                                        (By.XPATH, f"//*[contains(text(), '{tag}')]")
+                                    )
+                                )
+                                tag_option.click()
+                            except Exception:
+                                style_input.send_keys(Keys.ENTER)
+
                             time.sleep(0.5)
                             logger.info(f"✓ Added style tag: {tag}")
-                        except:
-                            # If exact match not found in dropdown, skip this tag
-                            logger.warning(f"Style tag '{tag}' not found in dropdown, skipping")
+
+                        except Exception as e:
+                            logger.warning(f"Style tag '{tag}' failed, skipping: {e}")
                             continue
-                    
+
                     logger.info(f"✓ Set {len(style_tags)} style tags")
                 else:
                     logger.debug("No style tags matched from title")
-                    
+
             except Exception as e:
                 logger.warning(f"Could not set style tags: {e}")
             
