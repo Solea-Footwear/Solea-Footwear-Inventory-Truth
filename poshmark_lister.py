@@ -365,14 +365,16 @@ Please feel free to message us with any questions before purchasing. Thanks!
 
 
             # ✨ NEW: Size using AI data
-            if listing_data.get('size'):
+            size_data = listing_data.get('size') or listing_data.get('item_specifics', {}).get('Size')
+
+            if size_data:
                 try:
                     size_input = WebDriverWait(self.driver, 10).until(
                         EC.element_to_be_clickable((By.CSS_SELECTOR, '[data-test="size"]'))
                     )
                     size_input.click()
 
-                    size_value = str(listing_data['size']).strip().upper()
+                    size_value = str(size_data).strip().upper()
 
                     try:
                         size_button = WebDriverWait(self.driver, 7).until(
@@ -527,7 +529,9 @@ Please feel free to message us with any questions before purchasing. Thanks!
 
 
             # ✨ NEW: Color selection (supports up to 2 colors)
-            if listing_data.get('color'):
+            color_data = listing_data.get('color') or listing_data.get('item_specifics', {}).get('Color')
+
+            if color_data:
                 try:
                     color_dropdown = WebDriverWait(self.driver, 10).until(
                         EC.element_to_be_clickable((By.CSS_SELECTOR, '[data-et-name="color"]'))
@@ -535,58 +539,53 @@ Please feel free to message us with any questions before purchasing. Thanks!
                     color_dropdown.click()
                     time.sleep(1)
 
-                    colors = listing_data.get('color')
+                    colors = color_data
 
                     if isinstance(colors, str):
-                        colors = colors.replace('/', ',').replace('&', ',').split(',')
+                        colors = colors.replace('/', ',').replace('&', ',').replace(' and ', ',').split(',')
                         colors = [c.strip() for c in colors if c.strip()]
 
                     colors = colors[:2]
 
                     for color in colors:
                         try:
-                            # Try multiple ways to find the color element
+                            color = color.strip()
+
+                            # Try multiple robust selectors
                             try:
-                                # Exact text match
                                 color_option = WebDriverWait(self.driver, 5).until(
                                     EC.element_to_be_clickable(
-                                        (By.XPATH, f"//*[normalize-space()='{color}']")
+                                        (By.XPATH, f"//button[.//text()[contains(., '{color}')]]")
                                     )
                                 )
                             except:
                                 try:
-                                    # Contains text match (fallback)
                                     color_option = WebDriverWait(self.driver, 5).until(
                                         EC.element_to_be_clickable(
-                                            (By.XPATH, f"//*[contains(text(), '{color}')]")
+                                            (By.XPATH, f"//*[contains(@data-et-name, '{color.lower()}')]")
                                         )
                                     )
                                 except:
-                                    # Attribute-based match (common for Poshmark)
                                     color_option = WebDriverWait(self.driver, 5).until(
                                         EC.element_to_be_clickable(
-                                            (By.XPATH, f"//*[@data-et-name='{color.lower()}']")
+                                            (By.XPATH, f"//*[contains(translate(text(),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'), '{color.lower()}')]")
                                         )
                                     )
 
-                            # Scroll into view (important for hidden color options)
                             self.driver.execute_script("arguments[0].scrollIntoView(true);", color_option)
-                            time.sleep(0.2)
-
-                            # Click using JS (more reliable than .click())
+                            time.sleep(0.3)
                             self.driver.execute_script("arguments[0].click();", color_option)
 
-                            time.sleep(0.4)
+                            time.sleep(0.5)
                             logger.info(f"✓ Added color: {color}")
 
                         except Exception as e:
                             logger.warning(f"Color '{color}' failed, skipping: {e}")
                             continue
-
                     logger.info(f"✓ Set colors: {colors}")
 
                 except Exception as e:
-                    logger.warning(f"Could not set colors: {e}")
+                    logger.warning(f"Could not set colors: {e}")        
             
             # Price
             # clicing on price input box to open popup
