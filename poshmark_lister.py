@@ -85,7 +85,6 @@ class PoshmarkLister:
         if profile_dir:
             self.profile_dir = os.path.abspath(profile_dir)
         else:
-            # base_dir = os.path.dirname(os.path.abspath(__file__))
             # self.profile_dir = os.path.join(os.path.dirname(base_dir), 'delisting', 'profiles')
             # Default: profiles folder next to this file
             base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -107,15 +106,18 @@ class PoshmarkLister:
         try:
             print("here is listing data")
             print(listing_data)
+            validation_error = self._validate_listing_data(listing_data, image_paths)
+            if validation_error:
+                return {'success': False, 'error': validation_error}
 
             if not self._init_driver():
                 return {'success': False, 'error': 'Failed to initialize driver'}
-            
+
+          
             # Navigate to create listing page
             logger.info("Navigating to Poshmark create listing page...")
             self.driver.get('https://poshmark.com/create-listing')
-            
-            # time.sleep(3)
+
             
             # Upload images
             logger.info(f"Uploading {len(image_paths)} images...")
@@ -151,7 +153,23 @@ class PoshmarkLister:
         
         finally:
             self._close_driver()
-    
+
+    def _validate_listing_data(self, listing_data: Dict, image_paths: List[str]) -> str:
+        """Validate required listing data before opening Selenium."""
+        required_fields = ["title", "price", "sku"]
+
+        for field in required_fields:
+            if not listing_data.get(field):
+                return f"Missing required field: {field}"
+
+        if not image_paths:
+            return "Missing image paths"
+
+        category = listing_data.get("category")
+        if category and not isinstance(category, dict):
+            return "Category must be a dictionary with level_1, level_2, and level_3"
+
+        return None
     
     def _init_driver(self) -> bool:
         """Initialize Chrome driver with Poshmark profile"""
@@ -170,11 +188,10 @@ class PoshmarkLister:
             chrome_options.add_argument('--no-sandbox')
             chrome_options.add_argument('--disable-dev-shm-usage')
             
-            # chrome_options.add_argument('--no-sandbox')
             # chrome_options.add_argument('--disable-dev-shm-usage')
             
             service = Service(ChromeDriverManager().install())
-            self.driver = webdriver.Chrome(options=chrome_options)
+            self.driver = webdriver.Chrome(service=service, options=chrome_options)
 
             # Remove webdriver property
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
@@ -228,15 +245,12 @@ class PoshmarkLister:
             all_paths = '\n'.join(upload_paths)
             file_input.send_keys(all_paths)
             
-            # Wait for upload to complete
-            # time.sleep(5)
 
             apply_button = WebDriverWait(self.driver, 20).until(
-                EC.presence_of_element_located((By.XPATH, '//button[@data-et-name="apply" and contains(text(),"Apply")]'))
-            )
+                EC.element_to_be_clickable((By.XPATH, '//button[@data-et-name="apply" and contains(text(),"Apply")]'))
+             )
             apply_button.click()
 
-            # time.sleep(5)
             
             logger.info(f"Uploaded {len(image_paths)} images")
             return True
@@ -255,7 +269,6 @@ class PoshmarkLister:
             title_input.clear()
             title_input.send_keys(listing_data['title'][:80])
             
-            # time.sleep(1)
             
             # Description
             desc_input = self.driver.find_element(By.CSS_SELECTOR, '[data-vv-name="description"]')
@@ -269,99 +282,78 @@ Any wear, marks, creasing, or signs of prior use will be shown in the photos. We
 Please feel free to message us with any questions before purchasing. Thanks!
             """
             desc_input.send_keys(hardcoded_description)
-            
-            # time.sleep(1)
-            
-            # Category - Two-level dropdown (Main Category + Subcategory)
-            # if listing_data.get('category'):
-            #     try:
-            #         # Click main category dropdown
-            #         category_dropdown = self.driver.find_element(By.XPATH, "//div[@class='dropdown__selector dropdown__selector--select-tag dropdown__selector--select-tag--large ellipses']")
-            #         category_dropdown.click()
-            #         time.sleep(1)
-                    
-            #         # Click "Men" (or extract from category string)
-            #         main_category = self.driver.find_element(By.XPATH, '//p[contains(text(),"Men")]')
-            #         main_category.click()
-            #         time.sleep(1)
-                    
-            #         # Click "Shoes" subcategory
-            #         shoes_option = self.driver.find_element(By.XPATH, '//div[contains(text(),"Shoes")]')
-            #         shoes_option.click()
-            #         time.sleep(1)
-
-            #         # coz subcategory automatically opens thats why we dont click that by selenium
-                    
-            #         # Click subcategory dropdown (Athletic Shoes, Boots, etc.)
-            #         # subcategory_dropdown = self.driver.find_element(By.XPATH, "//div[@class='dropdown__selector dropdown__selector--select-tag dropdown__selector--select-tag--large']")
-            #         # subcategory_dropdown.click()
-            #         time.sleep(1)
-                    
-            #         # Click specific subcategory (e.g., "Athletic Shoes")
-            #         athletic_shoes = self.driver.find_element(By.XPATH, "//a[contains(text(), 'Athletic Shoes')]")
-            #         athletic_shoes.click()
-            #         time.sleep(1)
-                    
-            #     except Exception as e:
-            #         logger.warning(f"Could not set category: {e}")
-                        
+                     
             
             # ✨ NEW: Category using AI data
             if listing_data.get('category'):
                 try:
-                    # category_dropdown = self.driver.find_element(By.XPATH, "//div[@class='dropdown__selector dropdown__selector--select-tag dropdown__selector--select-tag--large ellipses']")
 
                     category_dropdown = WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.XPATH, "//div[@class='dropdown__selector dropdown__selector--select-tag dropdown__selector--select-tag--large ellipses']"))
+                    EC.element_to_be_clickable((By.XPATH, "//div[@class='dropdown__selector dropdown__selector--select-tag dropdown__selector--select-tag--large ellipses']"))
                     )
                     category_dropdown.click()
-                    # time.sleep(1)
                     
                     # Get category from AI data
                     category = listing_data.get('category', {})
                     level_1 = category.get('level_1', 'Men')
                     level_2 = category.get('level_2', 'Shoes')
-                    level_3 = category.get('level_3', 'Athletic Shoes')
-
+                    level_3 = category.get('level_3')
                     if level_3 in ["Other", "Unknown", None, ""]:
-                        level_3 = "Athletic Shoes"
+                        level_3 = None
                     
                     # Click level 1 (Men/Women/Kids)
-                    # level_1_elem = self.driver.find_element(By.XPATH, f'//p[contains(text(),"{level_1}")]')
                     level_1_elem = WebDriverWait(self.driver, 10).until(
                     EC.presence_of_element_located((By.XPATH, f'//p[contains(text(),"{level_1}")]')))
                     level_1_elem.click()
-                    # time.sleep(1)
                     
                     # Click level 2 (Shoes/Accessories/etc)
                     # level_2_elem = self.driver.find_element(By.XPATH, f'//div[contains(text(),"{level_2}")]')
                     level_2_elem = WebDriverWait(self.driver, 10).until(
                     EC.presence_of_element_located((By.XPATH, f'//div[contains(text(),"{level_2}")]')))
                     level_2_elem.click()
-                    # time.sleep(1)
                     
                     # Click level 3 (Sneakers/Boots/etc) - it opens automatically
-                    # time.sleep(1)
                     # level_3_elem = self.driver.find_element(By.XPATH, f"//a[contains(text(), '{level_3}')]")
                     try:
-                        level_3_elem = WebDriverWait(self.driver, 10).until(
-                            EC.element_to_be_clickable(
-                                (By.XPATH, f"//*[normalize-space()='{level_3}']")
-                            )
-                        )
-                        level_3_elem.click()
+                        clicked_level_3 = False
+
+                        if level_3:
+                            for attempt in range(2):
+                                try:
+                                    level_3_elem = WebDriverWait(self.driver, 5).until(
+                                        EC.element_to_be_clickable(
+                                            (By.XPATH, f"//a[contains(., '{level_3}')]")
+                                        )
+                                    )
+                                    level_3_elem.click()
+                                    clicked_level_3 = True
+                                    break
+                                except Exception:
+                                    time.sleep(1)
+
+                        if not clicked_level_3:
+                            raise Exception("Level 3 category not clicked")
+
                     except Exception:
-                        logger.warning(f"Could not click level_3 '{level_3}', defaulting to Athletic Shoes")
+                        fallback_by_level_1 = {
+                            "men": "Athletic Shoes",
+                            "women": "Athletic Shoes",
+                            "kids": "Sneakers"
+                        }
+
+                        fallback_level_3 = fallback_by_level_1.get(level_1.lower(), "Sneakers")
+
+                        logger.warning(
+                            f"Could not click level_3 '{level_3}', defaulting to {fallback_level_3}"
+                        )
 
                         fallback_elem = WebDriverWait(self.driver, 10).until(
                             EC.element_to_be_clickable(
-                                (By.XPATH, "//*[normalize-space()='Athletic Shoes']")
+                                (By.XPATH, f"//*[normalize-space()='{fallback_level_3}']")
                             )
                         )
                         fallback_elem.click()
-                    # time.sleep(1)
-                    
-                    logger.info(f"✓ Set category: {level_1} > {level_2} > {level_3}")
+                        level_3 = fallback_level_3
                     
                 except Exception as e:
                     logger.warning(f"Could not set category: {e}")
@@ -396,13 +388,13 @@ Please feel free to message us with any questions before purchasing. Thanks!
                             EC.element_to_be_clickable(
                                 (
                                     By.XPATH,
-                                    f"//button[contains(@class,'multi-size-selector__button') and contains(normalize-space(), '{size_value}')]"
+                                   f"//button[contains(@class,'multi-size-selector__button') and normalize-space()='{size_value}']"
                                 )
                             )
                         )
 
                         print("here is size xpath")
-                        print(f"//button[contains(@class,'multi-size-selector__button') and contains(normalize-space(), '{size_value}')]")
+                        print(f"//button[contains(@class,'multi-size-selector__button') and normalize-space()='{size_value}']")
 
                         size_button.click()
                         logger.info(f"✓ Set size: {size_value}")
@@ -517,33 +509,44 @@ Please feel free to message us with any questions before purchasing. Thanks!
                 logger.warning(f"Could not set style tags: {e}")
             
                        
-            # # Brand
-            # if listing_data.get('item_specifics', {}).get('Brand'):
-            #     try:
-            #         brand_input = self.driver.find_element(By.CSS_SELECTOR, '[placeholder="Enter the Brand/Designer"]')
-            #         brand_input.clear()
-            #         brand_input.send_keys(listing_data['item_specifics']['Brand'])
-            #         time.sleep(1)
-            #     except:
-            #         logger.warning("Could not set brand")
-
-
-            # ✨ NEW: Brand using AI data
-            if listing_data.get('brand'):
+            # Brand
+            brand_value = listing_data.get('brand') or listing_data.get('item_specifics', {}).get('Brand')
+            
+            if brand_value:
                 try:
-                    # brand_input = self.driver.find_element(By.CSS_SELECTOR, '[placeholder="Enter the Brand/Designer"]')
+                    brand = str(brand_value).strip()
+
                     brand_input = WebDriverWait(self.driver, 10).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, '[placeholder="Enter the Brand/Designer"]')))
+                        EC.element_to_be_clickable(
+                            (By.CSS_SELECTOR, '[placeholder="Enter the Brand/Designer"]')
+                        )
+                    )
                     brand_input.clear()
-                    brand_input.send_keys(listing_data['brand'])
+                    brand_input.send_keys(brand)
                     time.sleep(1)
-                    
-                    logger.info(f"✓ Set brand: {listing_data['brand']}")
+
+                    try:
+                        brand_option = WebDriverWait(self.driver, 5).until(
+                            EC.element_to_be_clickable(
+                                (
+                                    By.XPATH,
+                                    f"//li[normalize-space()='{brand}']"
+                                )
+                            )
+                        )
+                        brand_option.click()
+                        logger.info(f"✓ Selected brand dropdown option: {brand}")
+
+                    except Exception:
+                        logger.warning(f"Brand dropdown option not found for '{brand}', leaving typed value")
+
+                    logger.info(f"✓ Set brand: {brand}")
+
                 except Exception as e:
                     logger.warning(f"Could not set brand: {e}")
 
 
-            # ✨ NEW: Color selection (supports up to 2 colors)
+            # Color selection supports up to 2 colors
             color_data = listing_data.get('color') or listing_data.get('item_specifics', {}).get('Color')
 
             print("RAW COLOR DATA:", color_data)
@@ -567,7 +570,6 @@ Please feel free to message us with any questions before purchasing. Thanks!
                         found_colors = []
                         colors_lower = colors.lower()
 
-                        # If parser gave bad generic color, use title instead
                         if colors_lower in ["other", "unknown", "multi", "multicolor", "multi-color"]:
                             colors_lower = listing_data.get("title", "").lower()
 
@@ -579,36 +581,29 @@ Please feel free to message us with any questions before purchasing. Thanks!
 
                         colors = found_colors if found_colors else ["Black"]
 
-                    print("PARSED COLORS:", colors)
-
                     colors = colors[:2]
+
+                    print("PARSED COLORS:", colors)
 
                     for color in colors:
                         try:
-                            color = color.strip()
+                            color = str(color).strip()
+                            if not color:
+                                continue
 
-                            # Try multiple robust selectors
-                            try:
-                                color_option = WebDriverWait(self.driver, 5).until(
-                                    EC.element_to_be_clickable(
-                                        (By.XPATH, f"//*[@data-et-name='{color.lower()}']")
+                            color_option = WebDriverWait(self.driver, 5).until(
+                                EC.element_to_be_clickable(
+                                    (
+                                        By.XPATH,
+                                        f"//button[contains(@aria-label, '{color}') or normalize-space()='{color}']"
                                     )
                                 )
-                            except:
-                                try:
-                                    color_option = WebDriverWait(self.driver, 5).until(
-                                        EC.element_to_be_clickable(
-                                            (By.XPATH, f"//*[contains(@data-et-name, '{color.lower()}')]")
-                                        )
-                                    )
-                                except:
-                                    color_option = WebDriverWait(self.driver, 5).until(
-                                        EC.element_to_be_clickable(
-                                            (By.XPATH, f"//*[contains(translate(text(),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'), '{color.lower()}')]")
-                                        )
-                                    )
+                            )
 
-                            self.driver.execute_script("arguments[0].scrollIntoView(true);", color_option)
+                            self.driver.execute_script(
+                                "arguments[0].scrollIntoView({block: 'center'});",
+                                color_option
+                            )
                             time.sleep(0.3)
                             self.driver.execute_script("arguments[0].click();", color_option)
 
@@ -618,6 +613,7 @@ Please feel free to message us with any questions before purchasing. Thanks!
                         except Exception as e:
                             logger.warning(f"Color '{color}' failed, skipping: {e}")
                             continue
+
                     logger.info(f"✓ Set colors: {colors}")
 
                 except Exception as e:
@@ -625,25 +621,20 @@ Please feel free to message us with any questions before purchasing. Thanks!
             
             # Price
             # clicing on price input box to open popup
-            # price_box = self.driver.find_element(By.CSS_SELECTOR,'[data-vv-name="listingPrice"]')
             price_box = WebDriverWait(self.driver, 10).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, '[data-vv-name="listingPrice"]')))
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, '[data-vv-name="listingPrice"]')))
             price_box.click()
 
-            # price_input = self.driver.find_element(By.CSS_SELECTOR, ".listing-price-input")
             price_input = WebDriverWait(self.driver, 10).until(
                         EC.presence_of_element_located((By.CSS_SELECTOR, ".listing-price-input")))
             price_input.clear()
             price_input.send_keys(str(int(listing_data['price'])))
-            # time.sleep(2)
             
 
             # clicking on done button
-            # done_btn = self.driver.find_element(By.CSS_SELECTOR,'[data-test="modal-footer"] [class="btn btn--primary"]')
             done_btn = WebDriverWait(self.driver, 10).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, '[data-test="modal-footer"] [class="btn btn--primary"]')))
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, '[data-test="modal-footer"] [class="btn btn--primary"]')))
             done_btn.click()
-            # time.sleep(2)
             
 
             
@@ -651,14 +642,13 @@ Please feel free to message us with any questions before purchasing. Thanks!
             if listing_data.get('sku'):
 
                 # show private details input box
-                # show_details = self.driver.find_element(By.CSS_SELECTOR,'[class="listing-editor-toggle-link"]')
                 show_details = WebDriverWait(self.driver, 10).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, '[class="listing-editor-toggle-link"]')))
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, '[class="listing-editor-toggle-link"]')))
                 show_details.click()
 
                 try:
                     sku_input = WebDriverWait(self.driver, 10).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, '[data-vv-name="sku"]'))
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, '[data-vv-name="sku"]'))
                     )
                     sku_input.clear()
                     sku_input.send_keys(listing_data['sku'])
@@ -712,18 +702,6 @@ Please feel free to message us with any questions before purchasing. Thanks!
 
             return listing_id
             
-            # Get listing ID from URL
-            # URL format: https://poshmark.com/listing/{LISTING_ID}
-            # current_url = self.driver.current_url
-            
-            # if '/listing/' in current_url:
-            #     listing_id = current_url.split('/listing/')[-1].split('?')[0]
-            #     logger.info(f"Got listing ID from URL: {listing_id}")
-            #     return listing_id
-            
-            logger.error("Could not extract listing ID from URL")
-            return None
-            
         except Exception as e:
             logger.error(f"Error submitting listing: {e}")
             return None
@@ -736,51 +714,3 @@ Please feel free to message us with any questions before purchasing. Thanks!
                 self.driver = None
             except:
                 pass
-
-
-
-"""
-TESTING CODE - Add to end of poshmark_lister.py
-"""
-
-if __name__ == '__main__':
-    import logging
-    logging.basicConfig(level=logging.INFO)
-    
-    # Test data
-    test_listing_data = {
-        'title': 'Nike Air Max 90 Mens Size 10 Black White Running Shoes Sneakers',
-        'description': 'Great condition Nike Air Max 90 in size 10. Black and white colorway. Minimal wear, clean inside and out. Perfect for casual wear or running.',
-        'price': 85.00,
-        'category': 'Men > Shoes > Athletic Shoes',
-        'item_specifics': {
-            'Brand': 'Nike',
-            'Size': '10',
-            'Color': 'Black/White',
-            'Condition': 'Good'
-        },
-        'sku': 'NIKE-AM90-001'
-    }
-    
-    # Test images (download some sample shoe images or use your own)
-    test_images = [
-        r'E:\Ebay Crosslisting\sample_images\1.png',
-        r'E:\Ebay Crosslisting\sample_images\2.png',
-        r'E:\Ebay Crosslisting\sample_images\3.png',
-        r'E:\Ebay Crosslisting\sample_images\4.png',
-        r'E:\Ebay Crosslisting\sample_images\5.png',
-    ]
-    
-    # Create lister
-    lister = PoshmarkLister()
-    
-    # Run test
-    print("Starting Poshmark listing test...")
-    result = lister.create_listing(test_listing_data, test_images)
-    
-    print("\n=== RESULT ===")
-    print(f"Success: {result['success']}")
-    if result['success']:
-        print(f"Listing ID: {result['channel_listing_id']}")
-    else:
-        print(f"Error: {result['error']}")
