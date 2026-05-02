@@ -110,7 +110,7 @@ class EmailParserService:
             # eBay - returns single item, wrap in list
             if platform == 'ebay':
                 result = self.ebay_parser.parse(email_data)
-                return [result] if result else []
+                return result if result else []
 
             # Poshmark - returns list (handles bundles)
             if platform == 'poshmark':
