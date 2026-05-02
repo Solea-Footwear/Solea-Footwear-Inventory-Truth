@@ -106,6 +106,26 @@ def parse_poshmark_colors(color_data, title: str = "") -> list:
 
     return (found_colors if found_colors else ["Black"])[:2]
 
+def extract_size_from_title(title: str) -> str:
+    """Extract common shoe sizes from title as fallback."""
+    import re
+
+    if not title:
+        return None
+
+    patterns = [
+        r'\bsize\s*([0-9]{1,2}(?:\.5)?[YCMB]?)\b',
+        r'\bsz\s*([0-9]{1,2}(?:\.5)?[YCMB]?)\b',
+        r'\b([0-9]{1,2}(?:\.5)?[YCMB])\b'
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, title, re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
+
+    return None
+
 class PoshmarkLister:
     """Selenium-based listing creation for Poshmark"""
     
@@ -187,6 +207,14 @@ class PoshmarkLister:
     def _validate_listing_data(self, listing_data: Dict, image_paths: List[str]) -> str:
         """Validate required listing data before opening Selenium."""
         required_fields = ["title", "price", "sku"]
+
+        size_value = (
+            listing_data.get("size")
+            or listing_data.get("item_specifics", {}).get("Size")
+            or extract_size_from_title(listing_data.get("title", ""))
+        )
+        if not size_value:
+            return "Missing required field: size"
 
         for field in required_fields:
             if not listing_data.get(field):
@@ -390,7 +418,11 @@ Please feel free to message us with any questions before purchasing. Thanks!
 
 
             # ✨ NEW: Size using AI data
-            size_data = listing_data.get('size') or listing_data.get('item_specifics', {}).get('Size')
+            size_data = (
+                listing_data.get('size')
+                or listing_data.get('item_specifics', {}).get('Size')
+                or extract_size_from_title(listing_data.get('title', ''))
+            )
 
             logger.debug(f"[SIZE] Raw size data: {size_data}")
             logger.debug(f"[SIZE] Category data: {listing_data.get('category')}")
@@ -466,7 +498,7 @@ Please feel free to message us with any questions before purchasing. Thanks!
             try:
                 # Get condition from category_data (platform-specific structured data)
                 poshmark_condition = listing_data.get('category_data', {}).get('condition', 'Good')
-                logger.debug("here is poshmark condition",poshmark_condition)
+                logger.debug(f"[CONDITION] Poshmark condition: {poshmark_condition}")
                 
                 logger.info(f"Setting condition: {poshmark_condition}")
                 
@@ -498,8 +530,7 @@ Please feel free to message us with any questions before purchasing. Thanks!
                 title = listing_data.get('title', '')
                 style_tags = extract_style_tags_from_title(title, max_tags=3)
 
-                logger.debug("here are style tags")
-                print(style_tags)
+                logger.debug(f"[STYLE] Style tags: {style_tags}")
 
                 if style_tags:
                     logger.info(f"Setting style tags: {style_tags}")
@@ -603,7 +634,7 @@ Please feel free to message us with any questions before purchasing. Thanks!
                                 EC.element_to_be_clickable(
                                     (
                                         By.XPATH,
-                                        f"//button[contains(@aria-label, '{color}') or normalize-space()='{color}']"
+                                        f"//*[self::button or self::label or self::span or self::div][contains(@aria-label, '{color}') or normalize-space()='{color}']"
                                     )
                                 )
                             )
@@ -619,8 +650,8 @@ Please feel free to message us with any questions before purchasing. Thanks!
                             logger.info(f"✓ Added color: {color}")
 
                         except Exception as e:
-                            logger.warning(f"Color '{color}' failed, skipping: {e}")
-                            continue
+                            logger.error(f"[COLOR] Required color '{color}' failed: {e}")
+                            return False
 
                     logger.info(f"✓ Set colors: {colors}")
 
