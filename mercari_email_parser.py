@@ -37,7 +37,11 @@ class MercariEmailParser:
                 'order_id': None,    # Mercari doesn't include order ID in email
                 'sold_date': 'Today',# Mercari always shows "Today"
                 'platform': 'mercari',
-                'message_id': str
+                'message_id': str,
+                'external_listing_id': str,
+                'external_order_id': None,
+                'event_type': 'sale',
+                'raw_message_id': str,
             }
         """
         try:
@@ -54,21 +58,56 @@ class MercariEmailParser:
                 logger.debug(f"Not a sale notification: {subject}")
                 return None
             
+            listing_id = self._extract_listing_id(body)
+
             result = {
-                'listing_id': self._extract_listing_id(body),
+                'listing_id': listing_id,
+                'external_listing_id': listing_id,
                 'sku': None,          # Mercari doesn't include SKU in emails
                 'title': self._extract_title(subject, body),
                 'price': self._extract_price(body),
                 'buyer_name': self._extract_buyer_name(body),
                 'order_id': None,     # Mercari doesn't include order ID in emails
+                'external_order_id': None,
                 'sold_date': self._extract_sold_date(email_data.get('date', '')),
                 'platform': 'mercari',
-                'message_id': message_id
+                'event_type': 'sale',
+                'message_id': message_id,
+                'raw_message_id': message_id,
             }
+
+            if not result['listing_id']:
+                logger.warning(
+                    "mercari_parse_missing_listing_id",
+                    extra={
+                        "title": result["title"],
+                        "message_id": message_id,
+                        "body_snippet": body[:500]
+                    }
+                )
+                return None
+
+            if result['price'] is None:
+                logger.warning(
+                    "mercari_parse_missing_price",
+                    extra={
+                        "listing_id": result["listing_id"],
+                        "message_id": message_id,
+                        "body_snippet": body[:500]
+                    }
+                )            
             
-            logger.info(f"Parsed Mercari: listing={result['listing_id']}, price=${result['price']}, buyer={result['buyer_name']}")
+            logger.info(
+                "mercari_parse_success",
+                extra={
+                    "listing_id": result["listing_id"],
+                    "price": result["price"],
+                    "buyer": result["buyer_name"],
+                    "message_id": message_id
+                }
+            )
             
-            return result if (result['listing_id'] or result['title']) else None
+            return result
             
         except Exception as e:
             logger.error(f"Error parsing Mercari email: {e}")
@@ -76,11 +115,12 @@ class MercariEmailParser:
     
     def _is_sale_notification(self, subject: str) -> bool:
         """Check if subject indicates a sale"""
-        return any(kw in subject.lower() for kw in [
-            "you've made a sale",
-            "you made a sale",
-            "congratulations"
-        ])
+        sale_patterns = [
+            r"you['’]?ve made a sale",
+            r"you made a sale",
+        ]
+
+        return any(re.search(p, subject, re.IGNORECASE) for p in sale_patterns)
     
     def _extract_title(self, subject: str, body: str) -> Optional[str]:
         """
@@ -155,36 +195,31 @@ class MercariEmailParser:
     def _extract_buyer_name(self, body: str) -> Optional[str]:
         """
         Extract buyer name from "Ship to:" section
-        
-        Pattern in HTML:
-        <span style='color:#5e6df2; font-weight:700;'>Ship to:</span><br>
-        Jessica Thompkins<br>
-        1370 Goodyear Blvd
-        
-        Also in plain text:
-        Ship to:
-        Jessica Thompkins
         """
-        # Pattern 1: HTML - after "Ship to:" span, get text before next <br>
+        # Pattern 1: HTML - after "Ship to:" get text before next <br>
         match = re.search(
-            r'Ship to:</span><br[^>]*>\s*([A-Za-z\s\-\.\']+?)\s*<br',
-            body, re.IGNORECASE | re.DOTALL
+            r'Ship to:</span><br[^>]*>\s*([^<\r\n]+?)\s*<br',
+            body,
+            re.IGNORECASE | re.DOTALL
         )
         if match:
             name = match.group(1).strip()
-            if re.match(r'^[A-Za-z\s\-\.\']+$', name) and len(name) > 2:
+            name = re.sub(r'[^A-Za-z\s\-\.\']', '', name).strip()
+            if len(name) > 2:
                 return name
-        
-        # Pattern 2: Plain text - after "Ship to:\n"
+
+        # Pattern 2: Plain text - after "Ship to:"
         match = re.search(
-            r'Ship to:\s*\r?\n([A-Za-z\s\-\.\']+)',
-            body, re.IGNORECASE
+            r'Ship to:\s*\r?\n([^\r\n]+)',
+            body,
+            re.IGNORECASE
         )
         if match:
             name = match.group(1).strip()
-            if re.match(r'^[A-Za-z\s\-\.\']+$', name) and len(name) > 2:
+            name = re.sub(r'[^A-Za-z\s\-\.\']', '', name).strip()
+            if len(name) > 2:
                 return name
-        
+
         return None
     
     def _extract_sold_date(self, date_str: str) -> Optional[str]:
@@ -232,5 +267,10 @@ class MercariEmailParser:
         )
         if match:
             return match.group(1).strip()
+            
+        # Pattern 3: Last fallback - any Mercari-style listing ID in body
+        match = re.search(r'\bm[0-9]{8,}\b', body, re.IGNORECASE)
+        if match:
+            return match.group(0).strip()
         
         return None
