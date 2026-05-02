@@ -76,6 +76,36 @@ def extract_style_tags_from_title(title: str, max_tags: int = 3) -> list:
 
     return matched_tags[:max_tags]
 
+def parse_poshmark_colors(color_data, title: str = "") -> list:
+    """Normalize raw color data into up to 2 Poshmark-supported colors."""
+    if not color_data:
+        return []
+
+    known_colors = [
+        "Black", "White", "Gray", "Grey", "Blue", "Red", "Brown", "Tan",
+        "Cream", "Pink", "Purple", "Green", "Yellow", "Orange", "Gold", "Silver"
+    ]
+
+    if isinstance(color_data, list):
+        raw_text = " ".join(str(color) for color in color_data)
+    else:
+        raw_text = str(color_data)
+
+    colors_lower = raw_text.lower()
+
+    if colors_lower in ["other", "unknown", "multi", "multicolor", "multi-color"]:
+        colors_lower = title.lower()
+
+    found_colors = []
+
+    for known_color in known_colors:
+        if known_color.lower() in colors_lower:
+            normalized_color = "Gray" if known_color == "Grey" else known_color
+            if normalized_color not in found_colors:
+                found_colors.append(normalized_color)
+
+    return (found_colors if found_colors else ["Black"])[:2]
+
 class PoshmarkLister:
     """Selenium-based listing creation for Poshmark"""
     
@@ -104,8 +134,8 @@ class PoshmarkLister:
             dict: Result with success status and listing ID
         """
         try:
-            print("here is listing data")
-            print(listing_data)
+            logger.debug("here is listing data")
+            logger.debug(listing_data)
             validation_error = self._validate_listing_data(listing_data, image_paths)
             if validation_error:
                 return {'success': False, 'error': validation_error}
@@ -322,7 +352,7 @@ Please feel free to message us with any questions before purchasing. Thanks!
                                 try:
                                     level_3_elem = WebDriverWait(self.driver, 5).until(
                                         EC.element_to_be_clickable(
-                                            (By.XPATH, f"//a[contains(., '{level_3}')]")
+                                            (By.XPATH, f"//a[normalize-space()='{level_3}']")
                                         )
                                     )
                                     level_3_elem.click()
@@ -331,7 +361,7 @@ Please feel free to message us with any questions before purchasing. Thanks!
                                 except Exception:
                                     time.sleep(1)
 
-                        if not clicked_level_3:
+                        if not clicked_level_3 and level_3:
                             raise Exception("Level 3 category not clicked")
 
                     except Exception:
@@ -362,8 +392,8 @@ Please feel free to message us with any questions before purchasing. Thanks!
             # ✨ NEW: Size using AI data
             size_data = listing_data.get('size') or listing_data.get('item_specifics', {}).get('Size')
 
-            print("RAW SIZE DATA:", size_data)
-            print("CATEGORY DATA:", listing_data.get('category'))
+            logger.debug(f"[SIZE] Raw size data: {size_data}")
+            logger.debug(f"[SIZE] Category data: {listing_data.get('category')}")
 
             if size_data:
                 try:
@@ -373,7 +403,7 @@ Please feel free to message us with any questions before purchasing. Thanks!
                     size_input.click()
 
                    
-                    size_value = str(size_data).strip().upper()
+                    size_value = str(size_data).strip().upper().replace(" ", "")
                     category_data = listing_data.get('category', {})
                     level_1_for_size = str(category_data.get('level_1', '')).lower()
 
@@ -381,7 +411,7 @@ Please feel free to message us with any questions before purchasing. Thanks!
                     if level_1_for_size == 'kids':
                         size_value = size_value.replace('Y', '').replace('C', '')
 
-                    print("SIZE VALUE FINAL:", size_value)
+                    logger.debug(f"[SIZE] Final normalized size: {size_value}")
 
                     try:
                         size_button = WebDriverWait(self.driver, 7).until(
@@ -393,8 +423,8 @@ Please feel free to message us with any questions before purchasing. Thanks!
                             )
                         )
 
-                        print("here is size xpath")
-                        print(f"//button[contains(@class,'multi-size-selector__button') and normalize-space()='{size_value}']")
+                        logger.debug("here is size xpath")
+                        logger.debug(f"//button[contains(@class,'multi-size-selector__button') and normalize-space()='{size_value}']")
 
                         size_button.click()
                         logger.info(f"✓ Set size: {size_value}")
@@ -436,7 +466,7 @@ Please feel free to message us with any questions before purchasing. Thanks!
             try:
                 # Get condition from category_data (platform-specific structured data)
                 poshmark_condition = listing_data.get('category_data', {}).get('condition', 'Good')
-                print("here is poshmark condition",poshmark_condition)
+                logger.debug("here is poshmark condition",poshmark_condition)
                 
                 logger.info(f"Setting condition: {poshmark_condition}")
                 
@@ -468,7 +498,7 @@ Please feel free to message us with any questions before purchasing. Thanks!
                 title = listing_data.get('title', '')
                 style_tags = extract_style_tags_from_title(title, max_tags=3)
 
-                print("here are style tags")
+                logger.debug("here are style tags")
                 print(style_tags)
 
                 if style_tags:
@@ -549,7 +579,7 @@ Please feel free to message us with any questions before purchasing. Thanks!
             # Color selection supports up to 2 colors
             color_data = listing_data.get('color') or listing_data.get('item_specifics', {}).get('Color')
 
-            print("RAW COLOR DATA:", color_data)
+            logger.debug(f"[COLOR] Raw color data: {color_data}")
 
             if color_data:
                 try:
@@ -559,31 +589,9 @@ Please feel free to message us with any questions before purchasing. Thanks!
                     color_dropdown.click()
                     time.sleep(1)
 
-                    colors = color_data
+                    colors = parse_poshmark_colors(color_data, listing_data.get("title", ""))
 
-                    if isinstance(colors, str):
-                        known_colors = [
-                            "Black", "White", "Gray", "Grey", "Blue", "Red", "Brown", "Tan",
-                            "Cream", "Pink", "Purple", "Green", "Yellow", "Orange", "Gold", "Silver"
-                        ]
-
-                        found_colors = []
-                        colors_lower = colors.lower()
-
-                        if colors_lower in ["other", "unknown", "multi", "multicolor", "multi-color"]:
-                            colors_lower = listing_data.get("title", "").lower()
-
-                        for known_color in known_colors:
-                            if known_color.lower() in colors_lower:
-                                normalized_color = "Gray" if known_color == "Grey" else known_color
-                                if normalized_color not in found_colors:
-                                    found_colors.append(normalized_color)
-
-                        colors = found_colors if found_colors else ["Black"]
-
-                    colors = colors[:2]
-
-                    print("PARSED COLORS:", colors)
+                    logger.debug(f"[COLOR] Parsed colors: {colors}")
 
                     for color in colors:
                         try:
@@ -673,18 +681,18 @@ Please feel free to message us with any questions before purchasing. Thanks!
             )
             listing_id  = listing_id_item.get_attribute("data-et-prop-listing_id")
 
-            print("here is listing id",listing_id)
+            logger.debug(f"[SUBMIT] Listing ID before submit: {listing_id}")
             
 
             # clicking on next button 
-            print("clicking on next button")
+            logger.info("[SUBMIT] Clicking next button")
             next_btn = WebDriverWait(self.driver, 20).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, '[data-et-name="next"]'))
             )
             next_btn.click()
 
             # Find and click List button
-            print("clicking on list button")
+            logger.info("[SUBMIT] Clicking list button")
             list_button = WebDriverWait(self.driver, 20).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, '[data-et-name="list"]'))
             )
@@ -698,7 +706,7 @@ Please feel free to message us with any questions before purchasing. Thanks!
                 EC.url_changes(current_url)
             )
 
-            print(f"URL changed to: {self.driver.current_url}")
+            logger.info(f"[SUBMIT] URL changed to: {self.driver.current_url}")
 
             return listing_id
             
