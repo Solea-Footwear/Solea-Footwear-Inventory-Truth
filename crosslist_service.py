@@ -76,7 +76,7 @@ class CrosslistService:
             logger.debug(f"Unit {unit.unit_code} currently listed on: {listed_platforms}")
             
             # Determine which platforms need listings
-            target_platforms = ['mercari']
+            target_platforms = ['poshmark']
             platforms_to_list = [p for p in target_platforms if p not in listed_platforms]
             
             if not platforms_to_list:
@@ -322,7 +322,7 @@ class CrosslistService:
         """
         from database import Unit, ListingTemplate
     
-        target_platforms = ['mercari']
+        target_platforms = ['poshmark']
         # Use this instead if you want both:
         # target_platforms = ['poshmark', 'mercari']
     
