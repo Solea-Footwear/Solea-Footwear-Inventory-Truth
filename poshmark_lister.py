@@ -615,48 +615,27 @@ Please feel free to message us with any questions before purchasing. Thanks!
 
                     for tag in style_tags:
                         try:
+                            style_input = WebDriverWait(self.driver, 10).until(
+                                EC.element_to_be_clickable((By.CSS_SELECTOR, '[data-vv-name="style-tag-input"]'))
+                            )
+
                             style_input.click()
-                            style_input.clear()
+                            style_input.send_keys(Keys.CONTROL, 'a')
+                            style_input.send_keys(Keys.BACKSPACE)
                             style_input.send_keys(tag)
                             time.sleep(1.5)
-                    
-                            try:
-                                tag_option = WebDriverWait(self.driver, 5).until(
-                                    EC.presence_of_element_located(
-                                        (
-                                            By.XPATH,
-                                            f"//*[self::li or self::div or self::span or self::button][normalize-space()='{tag}']"
-                                        )
-                                    )
-                                )
-                    
-                                self.driver.execute_script(
-                                    "arguments[0].scrollIntoView({block: 'center'});",
-                                    tag_option
-                                )
-                                time.sleep(0.2)
-                                self.driver.execute_script("arguments[0].click();", tag_option)
-                                logger.debug(f"[STYLE] Successfully clicked tag: {tag}")
-                    
-                            except Exception:
-                                style_input.send_keys(Keys.ARROW_DOWN)
-                                time.sleep(0.2)
-                                style_input.send_keys(Keys.ENTER)
-                    
-                            time.sleep(0.8)
-                            logger.info(f"✓ Added style tag: {tag}")
-                    
+
+                            # Prefer keyboard selection because Poshmark autocomplete can be hard to click
+                            style_input.send_keys(Keys.ARROW_DOWN)
+                            time.sleep(0.3)
+                            style_input.send_keys(Keys.ENTER)
+                            time.sleep(1)
+
+                            logger.info(f"✓ Attempted style tag selection: {tag}")
+
                         except Exception as e:
                             logger.warning(f"Style tag '{tag}' failed, skipping: {e}")
-                            logger.debug(f"[STYLE] Attempted tag: {tag}")
                             continue
-                            
-                    logger.info(f"✓ Set {len(style_tags)} style tags")
-                else:
-                    logger.debug("No style tags matched from title")
-
-            except Exception as e:
-                logger.warning(f"Could not set style tags: {e}")
             
                        
             # Brand
