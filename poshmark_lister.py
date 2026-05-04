@@ -600,50 +600,38 @@ Please feel free to message us with any questions before purchasing. Thanks!
             # ============================================
             # STYLE TAGS (up to 3 tags)
             # ============================================
-            try:
-                title = listing_data.get('title', '')
-                style_tags = extract_style_tags_from_title(title, max_tags=3)
-
-                logger.debug(f"[STYLE] Style tags: {style_tags}")
-
-                if style_tags:
-                    logger.info(f"Setting style tags: {style_tags}")
-
+            title = listing_data.get('title', '')
+            style_tags = extract_style_tags_from_title(title, max_tags=2)
+            
+            logger.debug(f"[STYLE] Style tags: {style_tags}")
+            
+            for tag in style_tags:
+                try:
                     style_input = WebDriverWait(self.driver, 10).until(
                         EC.element_to_be_clickable((By.CSS_SELECTOR, '[data-vv-name="style-tag-input"]'))
                     )
-
-                    for tag in style_tags:
-                        try:
-                            style_input = WebDriverWait(self.driver, 10).until(
-                                EC.element_to_be_clickable((By.CSS_SELECTOR, '[data-vv-name="style-tag-input"]'))
-                            )
-
-                            style_input.click()
-                            style_input.send_keys(Keys.CONTROL, 'a')
-                            style_input.send_keys(Keys.BACKSPACE)
-                            style_input.send_keys(tag)
-                            time.sleep(1.5)
-
-                            # Prefer keyboard selection because Poshmark autocomplete can be hard to click
-                            style_input.send_keys(Keys.ARROW_DOWN)
-                            time.sleep(0.3)
-                            style_input.send_keys(Keys.ENTER)
-                            time.sleep(1)
-
-                            logger.info(f"✓ Attempted style tag selection: {tag}")
-
-                        except Exception as e:
-                            logger.warning(f"Style tag '{tag}' failed, skipping: {e}")
-                            continue
             
-                    logger.info(f"✓ Set {len(style_tags)} style tags")
-                else:
-                    logger.debug("No style tags matched from title")
-
-            except Exception as e:
-                logger.warning(f"Could not set style tags: {e}")
+                    style_input.click()
+                    time.sleep(0.3)
             
+                    style_input.send_keys(tag)
+                    time.sleep(1.5)
+            
+                    style_input.send_keys(Keys.ARROW_DOWN)
+                    time.sleep(0.3)
+                    style_input.send_keys(Keys.ENTER)
+                    time.sleep(0.5)
+                    
+                    # Click outside to commit the selected tag
+                    self.driver.find_element(By.TAG_NAME, "body").click()
+                    time.sleep(0.5)
+            
+                    logger.info(f"✓ Added style tag: {tag}")
+            
+                except Exception as e:
+                    logger.warning(f"Style tag '{tag}' failed, skipping: {e}")
+                    continue
+                        
             # Brand
             brand_value = listing_data.get('brand') or listing_data.get('item_specifics', {}).get('Brand')
 
