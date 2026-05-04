@@ -129,6 +129,39 @@ def extract_size_from_title(title: str) -> str:
 
     return None
 
+def get_listing_size(listing_data: Dict) -> str:
+    """Get size from all likely listing_data locations."""
+    item_specifics = listing_data.get("item_specifics") or {}
+    category_data = listing_data.get("category_data") or {}
+    ai_data = listing_data.get("ai_data") or {}
+
+    possible_size = (
+        listing_data.get("size")
+        or listing_data.get("Size")
+        or item_specifics.get("US Shoe Size")
+        or item_specifics.get("US Shoe Size (Men's)")
+        or item_specifics.get("US Shoe Size (Women's)")
+        or item_specifics.get("US Size")
+        or item_specifics.get("Shoe Size")
+        or item_specifics.get("us shoe size")
+        or item_specifics.get("shoe size")
+        or item_specifics.get("size")
+        or category_data.get("size")
+        or ai_data.get("size")
+        or extract_size_from_title(listing_data.get("title", ""))
+    )
+
+    if not possible_size:
+        return None
+
+    return (
+        str(possible_size)
+        .strip()
+        .upper()
+        .replace("US", "")
+        .replace(" ", "")
+    )
+
 def map_poshmark_condition(raw_condition: str) -> str:
     if not raw_condition:
         return "Good"
@@ -231,13 +264,16 @@ class PoshmarkLister:
         """Validate required listing data before opening Selenium."""
         required_fields = ["title", "price", "sku"]
 
-        size_value = (
-            listing_data.get("size")
-            or listing_data.get("item_specifics", {}).get("Size")
-            or extract_size_from_title(listing_data.get("title", ""))
-        )
+        size_value = get_listing_size(listing_data)
+
         if not size_value:
+            logger.error(f"[VALIDATION] Missing size. listing_data keys: {list(listing_data.keys())}")
+            logger.error(f"[VALIDATION] item_specifics: {listing_data.get('item_specifics')}")
+            logger.error(f"[VALIDATION] title: {listing_data.get('title')}")
             return "Missing required field: size"
+
+        listing_data["size"] = size_value
+        logger.info(f"[SIZE] Final resolved size: {listing_data['size']}")
 
         for field in required_fields:
             if not listing_data.get(field):
@@ -376,9 +412,24 @@ Please feel free to message us with any questions before purchasing. Thanks!
                     
                     # Get category from AI data
                     category = listing_data.get('category', {})
+
                     level_1 = category.get('level_1', 'Men')
                     level_2 = category.get('level_2', 'Shoes')
                     level_3 = category.get('level_3')
+                    
+                    # Normalize category values
+                    level_1_lower = str(level_1).lower()
+                    level_2_lower = str(level_2).lower()
+                    
+                    # Force correct Poshmark structure
+                    if level_1_lower in ["boys", "girls", "baby", "kids"]:
+                        level_1 = "Kids"
+                    
+                    if str(level_1).lower() == "kids":
+                        level_2 = "Shoes"
+                    elif level_2_lower in ["mens shoes", "women shoes", "boys shoes", "girls shoes"]:
+                        level_2 = "Shoes"
+                    
                     title_lower = listing_data.get('title', '').lower()
 
                     if level_3 in ["Other", "Unknown", None, ""]:
@@ -430,10 +481,17 @@ Please feel free to message us with any questions before purchasing. Thanks!
                                     logger.debug(f"[CATEGORY] Attempting level_3 click: {level_3}")
                                     level_3_elem = WebDriverWait(self.driver, 5).until(
                                         EC.element_to_be_clickable(
-                                            (By.XPATH, f"//a[normalize-space()='{level_3}']")
+                                            (By.XPATH, f"//*[contains(text(), '{level_3}')]")
                                         )
                                     )
-                                    level_3_elem.click()
+                                    
+                                    self.driver.execute_script(
+                                        "arguments[0].scrollIntoView({block: 'center'});",
+                                        level_3_elem
+                                    )
+                                    time.sleep(0.3)
+                                    
+                                    self.driver.execute_script("arguments[0].click();", level_3_elem)
                                     clicked_level_3 = True
                                     break
                                 except Exception:
@@ -469,11 +527,8 @@ Please feel free to message us with any questions before purchasing. Thanks!
 
 
             # ✨ NEW: Size using AI data
-            size_data = (
-                listing_data.get('size')
-                or listing_data.get('item_specifics', {}).get('Size')
-                or extract_size_from_title(listing_data.get('title', ''))
-            )
+            size_data = get_listing_size(listing_data)
+            logger.info(f"[SIZE] Using size in UI: {size_data}")
 
             logger.debug(f"[SIZE] Raw size data: {size_data}")
             logger.debug(f"[SIZE] Category data: {listing_data.get('category')}")
