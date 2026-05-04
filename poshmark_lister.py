@@ -672,26 +672,32 @@ Please feel free to message us with any questions before purchasing. Thanks!
             # ============================================
             title = listing_data.get('title', '')
             style_tags = extract_style_tags_from_title(title, max_tags=2)
-            
+
             logger.debug(f"[STYLE] Style tags: {style_tags}")
-            
+
             for tag in style_tags:
                 try:
                     style_input = WebDriverWait(self.driver, 10).until(
                         EC.element_to_be_clickable((By.CSS_SELECTOR, '[data-vv-name="style-tag-input"]'))
                     )
-            
+
                     style_input.click()
                     time.sleep(0.3)
-            
+
+                    # Clear any leftover text from previous failed style attempt
+                    style_input.send_keys(Keys.CONTROL, "a")
+                    style_input.send_keys(Keys.BACKSPACE)
+                    time.sleep(0.2)
+
                     style_input.send_keys(tag)
                     time.sleep(1.5)
 
+                    # Click exact dropdown option only
                     style_option = WebDriverWait(self.driver, 5).until(
                         EC.element_to_be_clickable(
                             (
                                 By.XPATH,
-                                f"//*[normalize-space()='{tag}']"
+                                f"//*[contains(@class, 'dropdown') or contains(@class, 'suggestion') or self::li or self::div or self::span][normalize-space()='{tag}']"
                             )
                         )
                     )
@@ -702,12 +708,22 @@ Please feel free to message us with any questions before purchasing. Thanks!
                     )
                     time.sleep(0.2)
                     self.driver.execute_script("arguments[0].click();", style_option)
-                    time.sleep(0.5)
-            
+                    time.sleep(0.7)
+
                     logger.info(f"✓ Added style tag: {tag}")
-            
+
                 except Exception as e:
-                    logger.warning(f"Style tag '{tag}' failed, skipping: {e}")
+                    logger.warning(f"Style tag '{tag}' failed, clearing and skipping: {e}")
+
+                    try:
+                        style_input = self.driver.find_element(By.CSS_SELECTOR, '[data-vv-name="style-tag-input"]')
+                        style_input.click()
+                        style_input.send_keys(Keys.CONTROL, "a")
+                        style_input.send_keys(Keys.BACKSPACE)
+                        self.driver.find_element(By.TAG_NAME, "body").click()
+                    except Exception:
+                        pass
+
                     continue
                         
             # Brand
