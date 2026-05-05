@@ -31,7 +31,6 @@ class CrosslistService:
         logger.info(f"Checking cross-listing for unit {unit_id}")
         
         results = {
-            poshmark_created_today = 0
             'unit_id': str(unit_id),
             'needs_crosslisting': False,
             'platforms_to_list': [],
@@ -387,6 +386,8 @@ class CrosslistService:
             'created': 0,
             'errors': []
         }
+
+        poshmark_created_today = 0
 
         for unit_id in unit_ids:
             try:
