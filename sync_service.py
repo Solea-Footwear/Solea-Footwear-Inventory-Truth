@@ -272,6 +272,17 @@ class SyncService:
             existing_listing.updated_at = datetime.utcnow()
             
             result['updated'] = True
+
+            ebay_category_data = {
+                'category_id': ebay_item.get('category_id', ''),
+                'category_name': ebay_item.get('category_name', '')
+            }
+
+            self._create_listing_template(
+                ebay_item,
+                unit.product_id,
+                ebay_category_data
+            )
             
             # Check if unit is linked
             existing_link = self.db.query(ListingUnit).filter(
