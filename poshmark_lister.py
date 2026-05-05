@@ -550,9 +550,20 @@ Please feel free to message us with any questions before purchasing. Thanks!
             if size_data:
                 try:
                     size_input = WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, '[data-test="size"]'))
+                    )
+                    
+                    self.driver.execute_script(
+                        "arguments[0].scrollIntoView({block: 'center'});",
+                        size_input
+                    )
+                    time.sleep(0.5)
+                    
+                    WebDriverWait(self.driver, 10).until(
                         EC.element_to_be_clickable((By.CSS_SELECTOR, '[data-test="size"]'))
                     )
-                    size_input.click()
+                    
+                    self.driver.execute_script("arguments[0].click();", size_input)
                     time.sleep(0.5)
 
                     size_value = normalize_poshmark_size(size_data)
@@ -626,7 +637,8 @@ Please feel free to message us with any questions before purchasing. Thanks!
                         logger.info(f"✓ Set custom size: {size_value}")
 
                 except Exception as e:
-                    logger.warning(f"Could not set size: {e}")
+                    logger.error(f"Could not set required size: {e}")
+                    return False
 
 
             # ============================================
