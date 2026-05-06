@@ -58,7 +58,7 @@ class SyncService:
             # ! new code
             # ✨ NEW: Get all SKUs from database
             all_units = self.db.query(Unit).all()
-            our_skus = [unit.unit_code for unit in all_units if unit.unit_code][:250]
+            our_skus = [unit.unit_code for unit in all_units if unit.unit_code][:5000]
             logger.info(f"TEST MODE: limiting sync to {len(our_skus)} SKUs")
             
             logger.info(f"Found {len(our_skus)} SKUs in database")
