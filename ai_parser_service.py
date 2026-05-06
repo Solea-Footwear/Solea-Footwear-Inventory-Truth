@@ -85,8 +85,8 @@ class AIParserService:
             
             client = anthropic.Anthropic(
                 api_key=self.api_key,
-                timeout=30.0,
-                max_retries=1
+                timeout=15.0,
+                max_retries=0
             )
             
             logger.info(f"[AI] Parsing title: {listing_data.get('title', '')[:80]}")
