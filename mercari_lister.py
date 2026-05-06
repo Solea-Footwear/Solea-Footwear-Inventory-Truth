@@ -4,8 +4,12 @@ Automates listing creation on Mercari
 """
 import logging
 import os
+import re
 import time
+
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -16,6 +20,273 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 
 logger = logging.getLogger(__name__)
+
+MERCARI_MAX_TITLE_LENGTH = 80
+
+
+def clean_brand(brand: str) -> str:
+    """Normalize common brand issues before sending to Mercari."""
+    if not brand:
+        return ""
+
+    brand = brand.strip()
+
+    aliases = {
+        "NB": "New Balance",
+        "N Balance": "New Balance",
+        "Nikegolf": "Nike Golf",
+        "Adidasgolf": "Adidas Golf",
+        "Underarmour": "Under Armour",
+    }
+
+    return aliases.get(brand, brand)
+
+
+def detect_size_group(title: str, raw_size: str, category: dict = None) -> str:
+    """
+    Returns: adult, youth, toddler, infant
+    Used to prevent kids/toddler sizes from being treated as adult sizes.
+    """
+    text = f"{title or ''} {raw_size or ''}".lower()
+
+    if re.search(r"\b(infant|crib|baby)\b", text):
+        return "infant"
+
+    if re.search(r"\b\d+(\.\d+)?c\b", text) or re.search(r"\b(toddler|td|2t|3t|4t|5t)\b", text):
+        return "toddler"
+
+    if re.search(r"\b\d+(\.\d+)?y\b", text) or re.search(r"\b(youth|big kid|grade school|gs)\b", text):
+        return "youth"
+
+    if category:
+        joined_category = " ".join(str(v).lower() for v in category.values())
+        if "2t" in joined_category or "5t" in joined_category or "toddler" in joined_category:
+            return "toddler"
+        if "kid" in joined_category or "youth" in joined_category or "boys" in joined_category or "girls" in joined_category:
+            return "youth"
+
+    return "adult"
+
+
+def normalize_mercari_size(title: str, raw_size: str, category: dict = None) -> str:
+    """
+    Mercari dropdown options often use plain numbers for toddler/youth categories.
+    This strips C/Y only after category has already been determined correctly.
+    """
+    if not raw_size:
+        return ""
+
+    raw_size = str(raw_size).strip()
+    size_group = detect_size_group(title, raw_size, category)
+
+    if size_group in {"toddler", "youth", "infant"}:
+        return re.sub(r"[cCyY]$", "", raw_size).strip()
+
+    return raw_size
+
+
+def normalize_mercari_category(listing_data: dict) -> dict:
+    """
+    Safer deterministic category logic for shoes.
+    Preserves valid incoming category data unless there is a stronger size signal.
+    """
+    title = listing_data.get("title", "")
+    size = listing_data.get("size", "")
+    incoming_category = listing_data.get("category") or {}
+
+    size_group = detect_size_group(title, size, incoming_category)
+    title_lower = title.lower()
+
+    if "girl" in title_lower or "girls" in title_lower:
+        kids_level_2 = "Girls shoes"
+    else:
+        kids_level_2 = "Boys shoes"
+
+    if size_group == "toddler":
+        return {
+            "level_1": "Kids",
+            "level_2": kids_level_2,
+            "level_3": "Boys 2T-5T" if kids_level_2 == "Boys shoes" else "Girls 2T-5T",
+        }
+
+    if size_group == "youth":
+        return {
+            "level_1": "Kids",
+            "level_2": kids_level_2,
+            "level_3": "Boys 5-20" if kids_level_2 == "Boys shoes" else "Girls 5-20",
+        }
+
+    if isinstance(incoming_category, dict):
+        level_1 = incoming_category.get("level_1")
+        level_2 = incoming_category.get("level_2")
+        level_3 = incoming_category.get("level_3")
+
+        if level_1 and level_2 and level_3:
+            return incoming_category
+
+    if "women" in title_lower or "womens" in title_lower or "women's" in title_lower:
+        level_1 = "Women"
+    else:
+        level_1 = "Men"
+
+    if any(word in title_lower for word in ["boot", "boots"]):
+        level_3 = "Boots"
+    elif any(word in title_lower for word in ["sandal", "sandals", "slides", "slide", "flip flop"]):
+        level_3 = "Sandals"
+    elif any(word in title_lower for word in ["dress", "loafer", "loafers", "oxford", "oxfords"]):
+        level_3 = "Dress shoes"
+    else:
+        level_3 = "Athletic"
+
+    return {
+        "level_1": level_1,
+        "level_2": "Shoes",
+        "level_3": level_3,
+    }
+
+
+def normalize_mercari_condition(condition: str) -> str:
+    """
+    Converts raw/eBay/AI condition into Mercari condition test id.
+
+    Mercari condition logic:
+    - New: unused/new with tags or unopened
+    - Like new: unused/no signs of wear
+    - Good: gently used with one/few minor flaws
+    - Fair: used, functional, multiple flaws
+    - Poor: major flaws/damaged/for parts
+    """
+    condition_text = str(condition or "").lower()
+
+    if "poor" in condition_text or "parts" in condition_text or "damaged" in condition_text:
+        return "ConditionPoor"
+
+    if "fair" in condition_text or "multiple flaws" in condition_text:
+        return "ConditionFair"
+
+    if "new with box" in condition_text or "new with tags" in condition_text:
+        return "ConditionNew"
+
+    if (
+        "new without box" in condition_text
+        or "new without tags" in condition_text
+        or "unused" in condition_text
+        or "like new" in condition_text
+    ):
+        return "ConditionLikeNew"
+
+    return "ConditionGood"
+
+
+def build_mercari_title(listing_data: dict) -> str:
+    """
+    Creates a cleaner Mercari title from incoming title/brand/size.
+    Avoids overly spammy eBay-style titles.
+    """
+    raw_title = listing_data.get("title", "")
+    brand = clean_brand(listing_data.get("brand", ""))
+    size = str(listing_data.get("size", "")).strip()
+
+    title = raw_title
+
+    remove_words = [
+        "sneakers sneakers",
+        "shoes shoes",
+        "pre-owned",
+        "preowned",
+        "free shipping",
+        "look",
+        "rare",
+    ]
+
+    for word in remove_words:
+        title = re.sub(word, "", title, flags=re.IGNORECASE)
+
+    title = re.sub(r"\s+", " ", title).strip()
+
+    if brand and brand.lower() not in title.lower():
+        title = f"{brand} {title}"
+
+    if size and "size" not in title.lower():
+        title = f"{title} Size {size}"
+
+    if len(title) > MERCARI_MAX_TITLE_LENGTH:
+        title = title[:MERCARI_MAX_TITLE_LENGTH].rsplit(" ", 1)[0]
+
+    return title.strip()
+
+
+def build_mercari_description(listing_data: dict) -> str:
+    """
+    Builds a clean Mercari buyer-friendly description.
+    """
+    sku = listing_data.get("sku", "")
+    brand = clean_brand(listing_data.get("brand", ""))
+    size = listing_data.get("size", "")
+
+    lines = []
+
+    if brand or size:
+        lines.append(f"{brand} shoes - Size {size}".strip())
+
+    lines.extend([
+        "",
+        "Pre-owned condition.",
+        "Please review all photos carefully for the exact condition.",
+        "Any visible wear, scuffs, marks, or flaws are shown in the photos.",
+        "No box unless the box is shown in the photos.",
+        "",
+        "Ships same or next business day Monday-Friday.",
+    ])
+
+    if sku:
+        lines.extend([
+            "",
+            f"Inventory SKU: {sku}",
+        ])
+
+    return "\n".join(lines)
+
+
+def adjust_mercari_price(price) -> int:
+    """
+    Mercari strategy: keep price at eBay parity.
+    Buyer pays shipping on Mercari, and Mercari has lower seller fees.
+    Rounds to whole dollars because Mercari pricing is cleaner that way.
+    """
+    try:
+        price_decimal = Decimal(str(price))
+    except Exception:
+        price_decimal = Decimal("0")
+
+    adjusted = price_decimal * Decimal("1")
+    return int(adjusted.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def transform_for_mercari(listing_data: dict) -> dict:
+    """
+    Main adapter layer:
+    raw listing data -> safer Mercari-ready listing data.
+    """
+    transformed = dict(listing_data)
+
+    transformed["brand"] = clean_brand(transformed.get("brand", ""))
+    transformed["category"] = normalize_mercari_category(transformed)
+    transformed["size"] = normalize_mercari_size(
+        transformed.get("title", ""),
+        transformed.get("size", ""),
+        transformed.get("category", {}),
+    )
+    transformed["condition"] = normalize_mercari_condition(transformed.get("condition", ""))
+    transformed["title"] = build_mercari_title(transformed)
+    transformed["description"] = build_mercari_description(transformed)
+    transformed["price"] = adjust_mercari_price(transformed.get("price", 0))
+
+    if not transformed.get("sku"):
+        raise ValueError("Mercari listing is missing SKU. Do not list without SKU.")
+
+    return transformed
+
 
 
 class MercariLister:
@@ -48,7 +319,12 @@ class MercariLister:
         """
         try:
 
-            print("here is listing data")
+            print("Raw listing data:")
+            print(listing_data)
+
+            listing_data = transform_for_mercari(listing_data)
+
+            print("Mercari transformed listing data:")
             print(listing_data)
             
             if not self._init_driver():
@@ -183,76 +459,64 @@ class MercariLister:
         try:
             
             
-            # Category (if available)
-            # if listing_data.get('category'):
-            #     try:
-            #         category_btn = self.driver.find_element(By.XPATH, "//button[contains(text(),'Select category')]")
-            #         category_btn.click()
-            #         time.sleep(2)
-
-            #         # now wait for the category list to appear
-            #         category_list = WebDriverWait(self.driver, 10).until(
-            #             EC.presence_of_element_located((By.CSS_SELECTOR, '[data-testid="DialogBody"]'))
-            #         )
-
-            #         # now clicking on the men category
-            #         men_category = self.driver.find_element(By.XPATH, "//div[contains(text(), 'Men')]")
-            #         men_category.click()
-            #         time.sleep(1)
-
-            #         # now clicking on the shoes category
-            #         shoes_category = self.driver.find_element(By.XPATH, "//div[contains(text(), 'Shoes')]")
-            #         shoes_category.click()
-            #         time.sleep(1)
-
-            #         # now clicking on the athletic shoes category
-            #         athletic_shoes_category = self.driver.find_element(By.XPATH, "//div[contains(text(), 'Athletic')]")
-            #         athletic_shoes_category.click()
-            #         time.sleep(1)
-
-            #     except:
-            #         logger.warning("Could not set category")
-            
-            
-            # ✨ NEW: Category using AI data
+            # Category
             if listing_data.get('category'):
                 try:
-                    category_btn = self.driver.find_element(By.XPATH, "//button[contains(text(),'Select category')]")
+                    category_btn = WebDriverWait(self.driver, 10).until(
+                        EC.element_to_be_clickable(
+                            (By.XPATH, "//button[contains(text(),'Select category')]")
+                        )
+                    )
                     category_btn.click()
                     time.sleep(2)
 
-                    category_list = WebDriverWait(self.driver, 10).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, '[data-testid="DialogBody"]'))
+                    WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located(
+                            (By.CSS_SELECTOR, '[data-testid="DialogBody"]')
+                        )
                     )
 
-                    # ✨ Get category from AI data
                     category = listing_data.get('category', {})
+
                     level_1 = category.get('level_1', 'Men')
                     level_2 = category.get('level_2', 'Shoes')
                     level_3 = category.get('level_3', 'Athletic')
 
-                    # Click level 1 (Men/Women/Kids)
-                    level_1_elem = self.driver.find_element(By.XPATH, f"//div[contains(text(), '{level_1}')]")
+                    # Level 1
+                    level_1_elem = WebDriverWait(self.driver, 10).until(
+                        EC.element_to_be_clickable(
+                            (By.XPATH, f"//div[text()='{level_1}']")
+                        )
+                    )
                     level_1_elem.click()
                     time.sleep(1)
 
-                    # Click level 2 (Shoes/Tops/etc)
-                    level_2_elem = self.driver.find_element(By.XPATH, f"//div[contains(text(), '{level_2}')]")
+                    # Level 2
+                    level_2_elem = WebDriverWait(self.driver, 10).until(
+                        EC.element_to_be_clickable(
+                            (By.XPATH, f"//div[text()='{level_2}']")
+                        )
+                    )
                     level_2_elem.click()
                     time.sleep(1)
 
-                    # Click level 3 (Athletic/Boots/etc)
-                    level_3_elem = self.driver.find_element(By.XPATH, f"//div[contains(text(), '{level_3}')]")
+                    # Level 3
+                    level_3_elem = WebDriverWait(self.driver, 10).until(
+                        EC.element_to_be_clickable(
+                            (By.XPATH, f"//div[text()='{level_3}']")
+                        )
+                    )
                     level_3_elem.click()
                     time.sleep(1)
 
-                    logger.info(f"✓ Set category: {level_1} > {level_2} > {level_3}")
+                    logger.info(
+                        f"✓ Set category: {level_1} > {level_2} > {level_3}"
+                    )
 
                 except Exception as e:
                     logger.warning(f"Could not set category: {e}")
+
             
-
-
             # Title
             title_input = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, '[data-testid="Title"]'))
@@ -263,16 +527,18 @@ class MercariLister:
             time.sleep(1)
             
             # Description
-            desc_input = self.driver.find_element(By.CSS_SELECTOR, '[data-testid="Description"]')
+            desc_input = self.driver.find_element(
+                By.CSS_SELECTOR,
+                '[data-testid="Description"]'
+            )
+
             desc_input.clear()
-            hardcoded_description = """
-            Please Review All Photos For An Accurate Depiction. Any scuff marks and wear that may be present on the shoes will be visible in the pictures. To get a complete view of the shoes, please see all of the pictures. Some of the items will have wear that does not appear in every image of the shoes. To receive the best insight into the shoes, please refer to all photos because if there is any wear, it will be made clear in the other photos. If you have any questions, feel free to reach out to us.
-            """
-            # desc_input.send_keys(listing_data['description'][:950])
-            desc_input.send_keys(hardcoded_description)
-            
+
+            desc_input.send_keys(
+                listing_data.get("description", "")[:950]
+            )
+
             time.sleep(1)
-            
             
             # Condition selection
             # try:
@@ -358,52 +624,71 @@ class MercariLister:
                     logger.warning(f"Could not set brand: {e}")
 
 
-            # Size - Dropdown with list
-            # try:
-            #     size = listing_data.get('item_specifics', {}).get('Size', '')
-                
-            #     if size:
-            #         # Click size dropdown
-            #         size_dropdown = self.driver.find_element(By.CSS_SELECTOR, "[data-testid='Size']")
-            #         size_dropdown.click()
-            #         time.sleep(1)
-                    
-            #         # Find and click size option
-            #         # Format: "13 (46)" - contains US size at start
-            #         size_option = self.driver.find_element(
-            #             By.XPATH, 
-            #             f"//li[@data-testid='Size-option' and starts-with(text(), '{size} (')]"
-            #         )
-            #         size_option.click()
-            #         time.sleep(1)
-                    
-            #         logger.info(f"Selected size: {size}")
-                    
-            # except Exception as e:
-            #     logger.warning(f"Could not set size: {e}")
-
-
-            # ✨ NEW: Size using AI data (already formatted as "10.5 (43.5)")
+            # Size
             try:
-                size = listing_data.get('size', '')
-                
+                size = listing_data.get("size", "")
+
                 if size:
-                    size_dropdown = self.driver.find_element(By.CSS_SELECTOR, "[data-testid='Size']")
+                    size_dropdown = self.driver.find_element(
+                        By.CSS_SELECTOR,
+                        "[data-testid='Size']"
+                    )
                     size_dropdown.click()
                     time.sleep(1)
-                    
-                    # AI already formatted it: "10.5 (43.5)"
-                    size_option = self.driver.find_element(
-                        By.XPATH, 
-                        f"//li[@data-testid='Size-option' and text()='{size}']"
+
+                    size_options = WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_all_elements_located(
+                            (By.CSS_SELECTOR, "[data-testid='Size-option']")
+                        )
                     )
-                    size_option.click()
-                    time.sleep(1)
-                    
-                    logger.info(f"✓ Set size: {size}")
-                    
+
+                    print([opt.text for opt in size_options])
+
+                    matching_option = None
+
+                    for option in size_options:
+                        option_text = option.text.strip()
+
+                        if option_text == size:
+                            matching_option = option
+                            break
+
+                        if option_text.startswith(f"{size} "):
+                            matching_option = option
+                            break
+
+                        if option_text.startswith(f"{size}("):
+                            matching_option = option
+                            break
+
+                    if not matching_option:
+                        normalized_size = str(size).replace("C", "").replace("Y", "").strip()
+
+                        for option in size_options:
+                            option_text = option.text.strip()
+
+                            if option_text == normalized_size:
+                                matching_option = option
+                                break
+
+                            if option_text.startswith(f"{normalized_size} "):
+                                matching_option = option
+                                break
+
+                            if option_text.startswith(f"{normalized_size}("):
+                                matching_option = option
+                                break
+
+                    if matching_option:
+                        matching_option.click()
+                        time.sleep(1)
+                        logger.info(f"✓ Set size: {size}")
+                    else:
+                        logger.warning(f"Could not find matching size option for: {size}")
+
             except Exception as e:
                 logger.warning(f"Could not set size: {e}")
+
 
             # Price
             print('setting base price for mercari listing ',str(listing_data['price']))
@@ -473,20 +758,44 @@ class MercariLister:
             
             # Shipping
             try:
-                # Select shipping method (default to "Ship on your own")
-                shipping_option = self.driver.find_element(By.CSS_SELECTOR,'[data-testid="ShipOnYourOwn"]')
-                shipping_option.click()
+                # Use Mercari prepaid label instead of Ship on Your Own.
+                # This should allow Mercari to create the label after purchase.
+                mercari_label_option = WebDriverWait(self.driver, 10).until(
+                    EC.element_to_be_clickable(
+                        (By.CSS_SELECTOR, '[data-testid="MercariLabel"]')
+                    )
+                )
+                mercari_label_option.click()
                 time.sleep(1)
-            except:
-                logger.warning("Could not set shipping")
-            
+
+                # Set buyer to pay shipping.
+                buyer_pays_option = WebDriverWait(self.driver, 10).until(
+                    EC.element_to_be_clickable(
+                        (By.XPATH, "//*[contains(text(), 'Buyer pays')]")
+                    )
+                )
+                buyer_pays_option.click()
+                time.sleep(1)
+
+                logger.info("✓ Set shipping: Mercari prepaid label, buyer pays")
+
+            except Exception as e:
+                logger.warning(f"Could not set Mercari buyer-paid shipping: {e}")
+
             logger.info("Filled listing form")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error filling form: {e}")
+
+            try:
+                self.driver.save_screenshot("mercari_error.png")
+                logger.info("Saved screenshot: mercari_error.png")
+            except Exception:
+                pass
+
             return False
-    
+        
     def _submit_listing(self) -> str:
         """Submit listing and get listing ID"""
         try:

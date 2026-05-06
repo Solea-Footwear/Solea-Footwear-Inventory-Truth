@@ -33,7 +33,7 @@ class DelistService:
     
     def __init__(self, db):
         self.db = db
-    
+   
     def process_sale(self, parsed_email: Dict) -> Dict:
         """
         Process a sale and delist from other platforms
@@ -191,239 +191,52 @@ class DelistService:
         
         return results
     
-    # def _find_unit(self, parsed_email: Dict) -> Optional[object]:
-    #     """
-    #     Find unit by SKU or title matching
-        
-    #     Args:
-    #         parsed_email (dict): Parsed email data
-        
-    #     Returns:
-    #         Unit: Unit object or None
-    #     """
-    #     from database import Unit, Product
-        
-    #     sku = parsed_email.get('sku')
-    #     title = parsed_email.get('title', '')
-        
-    #     # Try exact SKU match first
-    #     if sku:
-    #         unit = self.db.query(Unit).filter(Unit.unit_code == sku).first()
-    #         if unit:
-    #             logger.debug(f"Found unit by exact SKU: {sku}")
-    #             return unit
-        
-    #     # Try partial SKU match (in case email has extra chars)
-    #     if sku and len(sku) > 3:
-    #         unit = self.db.query(Unit).filter(Unit.unit_code.like(f'%{sku}%')).first()
-    #         if unit:
-    #             logger.debug(f"Found unit by partial SKU: {sku}")
-    #             return unit
-        
-    #     # Try title matching (find product then unit)
-    #     if title:
-    #         # Extract keywords from title
-    #         keywords = title.lower().split()[:5]  # First 5 words
-            
-    #         for keyword in keywords:
-    #             if len(keyword) > 3:  # Skip short words
-    #                 products = self.db.query(Product).filter(
-    #                     (Product.brand.ilike(f'%{keyword}%')) |
-    #                     (Product.model.ilike(f'%{keyword}%'))
-    #                 ).all()
-                    
-    #                 for product in products:
-    #                     # Find unit for this product that's currently listed
-    #                     unit = self.db.query(Unit).filter(
-    #                         Unit.product_id == product.id,
-    #                         Unit.status == 'listed'
-    #                     ).first()
-                        
-    #                     if unit:
-    #                         logger.debug(f"Found unit by title matching: {title}")
-    #                         return unit
-        
-    #     return None
-
-
-    # def _find_unit(self, parsed_email: Dict) -> Optional[object]:
-    #     """
-    #     Find unit by listing ID or order ID
-        
-    #     Args:
-    #         parsed_email (dict): Parsed email data
-        
-    #     Returns:
-    #         Unit: Unit object or None
-    #     """
-    #     from database import Unit, Listing, ListingUnit
-        
-    #     platform = parsed_email.get('platform')
-    #     listing_id = parsed_email.get('listing_id')
-    #     order_id = parsed_email.get('order_id')
-        
-    #     # Method 1: Find by listing_id (Poshmark, Mercari)
-    #     if listing_id:
-    #         listing = self.db.query(Listing).filter(
-    #             Listing.channel_listing_id == listing_id
-    #         ).first()
-            
-    #         if listing:
-    #             # Get unit from listing
-    #             listing_unit = self.db.query(ListingUnit).filter(
-    #                 ListingUnit.listing_id == listing.id
-    #             ).first()
-                
-    #             if listing_unit:
-    #                 unit = self.db.query(Unit).filter(
-    #                     Unit.id == listing_unit.unit_id
-    #                 ).first()
-                    
-    #                 if unit:
-    #                     logger.debug(f"Found unit by listing_id: {unit.unit_code}")
-    #                     return unit
-        
-    #     # Method 2: Find by order_id (eBay) - fetch item_id from API
-    #     if platform == 'ebay' and order_id:
-    #         print("Platform is ebay and here is order id",order_id)
-    #         item_id = self._get_ebay_item_from_order(order_id)
-    #         print("here is item id ",item_id)
-            
-    #         if item_id:
-    #             listing = self.db.query(Listing).filter(
-    #                 Listing.channel_listing_id == item_id
-    #             ).first()
-                
-    #             if listing:
-    #                 listing_unit = self.db.query(ListingUnit).filter(
-    #                     ListingUnit.listing_id == listing.id
-    #                 ).first()
-                    
-    #                 if listing_unit:
-    #                     unit = self.db.query(Unit).filter(
-    #                         Unit.id == listing_unit.unit_id
-    #                     ).first()
-                        
-    #                     if unit:
-    #                         logger.debug(f"Found unit by eBay order_id: {unit.unit_code}")
-    #                         return unit
-        
-    #     # Method 3: Fallback to SKU (if available)
-    #     sku = parsed_email.get('sku')
-    #     if sku:
-    #         unit = self.db.query(Unit).filter(Unit.unit_code == sku).first()
-    #         if unit:
-    #             logger.debug(f"Found unit by SKU: {sku}")
-    #             return unit
-        
-    #     logger.warning(f"Unit not found for platform={platform}, listing_id={listing_id}, order_id={order_id}")
-    #     return None
-
 
     def _find_unit(self, parsed_email: Dict) -> Optional[object]:
         """
-        Find unit by listing ID or order ID
-        Handles "Sell Similar" by falling back to SKU and updating listing ID
+        Find unit by SKU first, then listing ID.
+        SKU is the primary durable key for delisting.
         """
-        from database import Unit, Listing, ListingUnit, Channel
-        
+        from database import Unit, Listing, ListingUnit
+
         platform = parsed_email.get('platform')
         listing_id = parsed_email.get('listing_id')
         order_id = parsed_email.get('order_id')
-        
-        # Method 1: Find by listing_id (Poshmark, Mercari)
+
+        # Normalize SKU
+        raw_sku = parsed_email.get('sku')
+        sku = str(raw_sku).strip().upper() if raw_sku else None
+
+        # ✅ Method 1: SKU FIRST (MOST IMPORTANT)
+        if sku:
+            unit = self.db.query(Unit).filter(Unit.unit_code == sku).first()
+            if unit:
+                logger.info(f"✓ Found unit by SKU FIRST: {sku}")
+                return unit
+
+        # Method 2: listing_id fallback
         if listing_id:
             listing = self.db.query(Listing).filter(
                 Listing.channel_listing_id == listing_id
             ).first()
-            
+
             if listing:
                 listing_unit = self.db.query(ListingUnit).filter(
                     ListingUnit.listing_id == listing.id
                 ).first()
-                
+
                 if listing_unit:
                     unit = self.db.query(Unit).filter(
                         Unit.id == listing_unit.unit_id
                     ).first()
-                    
+
                     if unit:
                         logger.debug(f"Found unit by listing_id: {unit.unit_code}")
                         return unit
-        
-        # Method 2: Find by order_id (eBay) with SKU fallback for "Sell Similar"
-        if platform == 'ebay' and order_id:
-            logger.debug(f"Platform is ebay, order_id={order_id}")
-            
-            # Get BOTH item_id and SKU from eBay API
-            ebay_data = self._get_ebay_item_from_order(order_id)
-            
-            if ebay_data:
-                item_id = ebay_data.get('item_id')
-                sku = ebay_data.get('sku')
-                
-                logger.debug(f"eBay order data: item_id={item_id}, sku={sku}")
-                
-                # Try to find listing by item_id first
-                listing = self.db.query(Listing).filter(
-                    Listing.channel_listing_id == item_id
-                ).first()
-                
-                if listing:
-                    # Found by item_id (normal case)
-                    listing_unit = self.db.query(ListingUnit).filter(
-                        ListingUnit.listing_id == listing.id
-                    ).first()
-                    
-                    if listing_unit:
-                        unit = self.db.query(Unit).filter(
-                            Unit.id == listing_unit.unit_id
-                        ).first()
-                        
-                        if unit:
-                            logger.debug(f"Found unit by eBay item_id: {unit.unit_code}")
-                            return unit
-                
-                # NOT FOUND by item_id - Try fallback to SKU (handles "Sell Similar")
-                if sku:
-                    logger.info(f"Item ID {item_id} not found, trying SKU fallback: {sku}")
-                    
-                    unit = self.db.query(Unit).filter(Unit.unit_code == sku).first()
-                    
-                    if unit:
-                        logger.info(f"✓ Found unit by SKU: {unit.unit_code}")
-                        
-                        # Find the old eBay listing for this unit
-                        old_listing = self.db.query(Listing).join(ListingUnit).join(Channel).filter(
-                            ListingUnit.unit_id == unit.id,
-                            Channel.name == 'eBay',
-                            # Listing.status == 'active'
-                        ).first()
-                        
-                        if old_listing:
-                            old_item_id = old_listing.channel_listing_id
-                            logger.warning(f"🔄 Detected 'Sell Similar': Updating listing from {old_item_id} → {item_id}")
-                            
-                            # Update listing with new item ID
-                            old_listing.channel_listing_id = item_id
-                            old_listing.updated_at = datetime.utcnow()
-                            
-                            # Store in parsed_email so we process the updated listing
-                            parsed_email['_updated_listing'] = True
-                        
-                        return unit
-                    else:
-                        logger.warning(f"SKU {sku} not found in database - listing may be very old or never synced")
-        
-        # Method 3: Fallback to SKU (if available in parsed_email)
-        sku = parsed_email.get('sku')
-        if sku:
-            unit = self.db.query(Unit).filter(Unit.unit_code == sku).first()
-            if unit:
-                logger.debug(f"Found unit by SKU: {sku}")
-                return unit
-        
-        logger.warning(f"Unit not found for platform={platform}, listing_id={listing_id}, order_id={order_id}, sku={sku}")
+
+        logger.warning(
+            f"Unit not found for platform={platform}, listing_id={listing_id}, order_id={order_id}, sku={sku}"
+        )
         return None
 
     # def _get_ebay_item_from_order(self, order_id: str) -> Optional[str]:
@@ -459,45 +272,7 @@ class DelistService:
     #         logger.error(f"Error fetching eBay item from order {order_id}: {e}")
     #         return None
     
-
-    def _get_ebay_item_from_order(self, order_id: str) -> Optional[Dict]:
-        """
-        Get eBay item ID and SKU from order ID using API
-        
-        Args:
-            order_id (str): eBay order ID
-        
-        Returns:
-            dict: {'item_id': str, 'sku': str} or None
-        """
-        try:
-            from ebay_api import ebay_api
-            
-            # Call eBay GetOrders API
-            response = ebay_api.api.execute('GetOrders', {
-                'OrderIDArray': {'OrderID': order_id}
-            })
-            
-            # Extract item ID and SKU from response
-            if response.reply.OrderArray:
-                order = response.reply.OrderArray.Order[0]
-                if order.TransactionArray:
-                    transaction = order.TransactionArray.Transaction[0]
-                    item_id = transaction.Item.ItemID
-                    sku = transaction.Item.SKU if hasattr(transaction.Item, 'SKU') else None
-                    
-                    logger.debug(f"Found eBay order {order_id}: item_id={item_id}, sku={sku}")
-                    return {
-                        'item_id': item_id,
-                        'sku': sku
-                    }
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error fetching eBay item from order {order_id}: {e}")
-            return None
-    
+  
     def _update_unit_sold(self, unit: object, parsed_email: Dict):
         """Update unit as sold"""
         unit.status = 'sold'

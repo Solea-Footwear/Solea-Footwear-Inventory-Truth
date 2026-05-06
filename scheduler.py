@@ -22,7 +22,6 @@ from returns.email_processing_service import EmailProcessingService
 
 logger = logging.getLogger(__name__)
 
-import logging
 from crosslisting.crosslist_service import CrosslistService
 from database import SessionLocal
 
@@ -304,7 +303,7 @@ def check_sale_emails():
         delist_service = DelistService(db)
 
         # Get interval with 3 minute buffer
-        since_last_minutes = int(os.getenv("EMAIL_CHECK_INTERVAL_MINUTES", "3")) + 60
+        since_last_minutes = int(os.getenv("EMAIL_CHECK_INTERVAL_MINUTES", "3")) + 5
 
         # Get new sale emails
         emails = gmail.get_sale_emails(since_minutes=since_last_minutes)
@@ -324,6 +323,7 @@ def check_sale_emails():
             try:
                 # Parse email - returns LIST of items (handles bundles)
                 sale_items = parser.parse_sale_email(email)
+                logger.info(f"Parsed {len(sale_items)} items (message_id={email.get('message_id')})")
                 
                 if not sale_items:
                     logger.warning(f"Failed to parse email {email.get('message_id')}")
@@ -331,11 +331,19 @@ def check_sale_emails():
                     continue
                 
                 # Log what we found
-                platform = sale_items[0].get('platform', 'unknown')
+                first_item = sale_items[0] if isinstance(sale_items[0], dict) else {}
+
+                platform = first_item.get('platform', 'unknown')
+                
                 if len(sale_items) > 1:
                     logger.info(f"📦 BUNDLE SALE: {len(sale_items)} items from {platform}")
                 else:
-                    sku = sale_items[0].get('sku') or sale_items[0].get('skus', [None])[0]
+                    sku = first_item.get('sku')
+                
+                    # Only check skus if it's actually a list
+                    if not sku and isinstance(first_item.get('skus'), list):
+                        sku = first_item.get('skus')[0]
+                
                     logger.info(f"📦 Single sale: Platform={platform}, SKU={sku}")
                 
                 # Process EACH item in the sale
@@ -344,10 +352,24 @@ def check_sale_emails():
                 
                 for i, item in enumerate(sale_items, 1):
                     try:
-                        sku = item.get('sku') or (item.get('skus', [None])[0] if item.get('skus') else None)
+                        if not isinstance(item, dict):
+                            logger.error(f"  ✗ Invalid sale item format: expected dict, got {type(item).__name__}: {item}")
+                            items_failed += 1
+                            continue
+                
+                        sku = item.get('sku')
+
+                        if not sku and isinstance(item.get('skus'), list):
+                            sku = item['skus'][0]
+                        
+                        if not sku:
+                            logger.error(f"  ✗ Skipping item {i}: No SKU found")
+                            items_failed += 1
+                            continue
+                        
                         logger.info(f"  Processing item {i}/{len(sale_items)}: SKU={sku}")
                         
-                        # Process sale and delist
+                        # NOW process
                         result = delist_service.process_sale(item)
                         
                         if result.get('success'):

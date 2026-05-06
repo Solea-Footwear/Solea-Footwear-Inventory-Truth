@@ -8,7 +8,8 @@ import json
 import re
 from typing import Dict, Optional , List
 import anthropic
-from dotenv import load_dotenv
+from database import SessionLocal
+from sqlalchemy import text
 
 
 # ebay email parser
@@ -38,56 +39,7 @@ class EmailParserService:
 
         # init mercari email parser
         self.mercari_parser = MercariEmailParser()
-    
-    # def parse_sale_email(self, email_data: Dict) -> Optional[Dict]:
-    #     """
-    #     Parse sale email to extract key information
-        
-    #     Args:
-    #         email_data (dict): Email data from Gmail
-        
-    #     Returns:
-    #         dict: Parsed sale information or None
-    #     """
-    #     platform = email_data.get('platform', 'unknown')
-        
-    #     if platform == 'unknown':
-    #         logger.warning("Unknown platform, skipping")
-    #         return None
-        
-        
-    #     # Use it first for eBay
-    #     if platform == 'ebay':
-    #         result = self.ebay_parser.parse(email_data)
-    #         if result:
-    #             return result
-
-
-    #     # In parse_sale_email:
-    #     if platform == 'poshmark':
-    #         result = self.poshmark_parser.parse(email_data)
-    #         if result:
-    #             return result
-            
-
-    #     # In parse_sale_email:
-    #     if platform == 'mercari':
-    #         result = self.mercari_parser.parse(email_data)
-    #         if result:
-    #             return result
-
-    #     # ! uncomment below code if you want to use ai and comment above blocks for specific platforms.
-    #     # Try AI parsing first
-    #     print("Using Ai to fetch email parsing result...")
-    #     if self.client:
-    #         result = self._parse_with_ai(email_data)
-    #         if result:
-    #             return result
-        
-    #     # Fallback to rule-based parsing
-    #     logger.info(f"Falling back to rule-based parsing for {platform}")
-    #     return self._parse_with_rules(email_data)
-    
+      
     
     def parse_sale_email(self, email_data: Dict) -> List[Dict]:
         """
@@ -110,7 +62,7 @@ class EmailParserService:
             # eBay - returns single item, wrap in list
             if platform == 'ebay':
                 result = self.ebay_parser.parse(email_data)
-                return [result] if result else []
+                return result if result else []
 
             # Poshmark - returns list (handles bundles)
             if platform == 'poshmark':
@@ -120,8 +72,59 @@ class EmailParserService:
             # Mercari - returns single item, wrap in list
             if platform == 'mercari':
                 result = self.mercari_parser.parse(email_data)
-                return [result] if result else []
 
+                if not result:
+                    return []
+
+                inserted = self._insert_marketplace_event(result)
+
+                if not inserted:
+                    logger.info(
+                        "duplicate_mercari_event_skipped",
+                        extra={"message_id": result["message_id"]}
+                    )
+                    return []
+
+                sku = self._resolve_sku_from_mercari_listing_id(
+                    result["external_listing_id"]
+                )
+
+                if not sku:
+                    logger.error(
+                        "mercari_sale_cannot_resolve_sku",
+                        extra={"external_listing_id": result["external_listing_id"]}
+                    )
+
+                    result["sku"] = None
+                    result["needs_reconciliation"] = True
+                    result["reconciliation_reason"] = "mercari_listing_id_not_mapped_to_sku"
+
+                    self._mark_marketplace_event_needs_reconciliation(
+                        result["platform"],
+                        result["message_id"],
+                        result["reconciliation_reason"]
+                    )
+
+                    return [result]
+
+                result["sku"] = sku
+
+                self._update_marketplace_event_sku(
+                    result["platform"],
+                    result["message_id"],
+                    sku
+                )
+                
+                logger.info(
+                    "mercari_sale_processed",
+                    extra={
+                        "listing_id": result["external_listing_id"],
+                        "sku": sku,
+                        "price": result.get("price")
+                    }
+                )
+
+                return [result]
             # ! uncomment below code if you want to use ai and comment above blocks for specific platforms.
             # Try AI parsing first
             print("Using AI to fetch email parsing result...")
@@ -137,8 +140,183 @@ class EmailParserService:
         except Exception as e:
             logger.error(f"Error parsing sale email: {e}")
             return []
-        
+
+    def _update_marketplace_event_sku(self, platform: str, message_id: str, sku: str) -> None:
+        db = SessionLocal()
+
+        try:
+            db.execute(
+                text("""
+                    update marketplace_events
+                    set 
+                        sku = :sku,
+                        raw_payload = jsonb_set(
+                            raw_payload,
+                            '{sku}',
+                            to_jsonb(CAST(:sku AS text)),
+                            true
+                        )
+                    where platform = :platform
+                    and message_id = :message_id
+                """),
+                {
+                    "platform": platform,
+                    "message_id": message_id,
+                    "sku": sku,
+                }
+            )
+
+            db.commit()
+
+        except Exception as e:
+            db.rollback()
+            logger.error(
+                "marketplace_event_sku_update_failed",
+                extra={
+                    "platform": platform,
+                    "message_id": message_id,
+                    "sku": sku,
+                    "error": str(e)
+                }
+            )
+
+        finally:
+            db.close()
+
+    def _mark_marketplace_event_needs_reconciliation(self, platform: str, message_id: str, reason: str) -> None:
+        db = SessionLocal()
+
+        try:
+            db.execute(
+                text("""
+                    update marketplace_events
+                    set raw_payload = jsonb_set(
+                        jsonb_set(
+                            raw_payload,
+                            '{needs_reconciliation}',
+                            'true'::jsonb,
+                            true
+                        ),
+                        '{reconciliation_reason}',
+                        to_jsonb(CAST(:reason AS text)),
+                        true
+                    )
+                    where platform = :platform
+                    and message_id = :message_id
+                """),
+                {
+                    "platform": platform,
+                    "message_id": message_id,
+                    "reason": reason,
+                }
+            )
+
+            db.commit()
+
+        except Exception as e:
+            db.rollback()
+            logger.error(
+                "marketplace_event_reconciliation_update_failed",
+                extra={
+                    "platform": platform,
+                    "message_id": message_id,
+                    "reason": reason,
+                    "error": str(e)
+                }
+            )
+
+        finally:
+            db.close()
     
+    def _insert_marketplace_event(self, parsed_event: Dict) -> bool:
+        db = SessionLocal()
+
+        try:
+            result = db.execute(
+                text("""
+                    insert into marketplace_events (
+                        platform,
+                        event_type,
+                        message_id,
+                        external_listing_id,
+                        external_order_id,
+                        sku,
+                        raw_payload
+                    )
+                    values (
+                        :platform,
+                        :event_type,
+                        :message_id,
+                        :external_listing_id,
+                        :external_order_id,
+                        :sku,
+                        cast(:raw_payload as jsonb)
+                    )
+                    on conflict (platform, message_id) do nothing
+                    returning id
+                """),
+                {
+                    "platform": parsed_event["platform"],
+                    "event_type": parsed_event["event_type"],
+                    "message_id": parsed_event["message_id"],
+                    "external_listing_id": parsed_event.get("external_listing_id"),
+                    "external_order_id": parsed_event.get("external_order_id"),
+                    "sku": parsed_event.get("sku"),
+                    "raw_payload": json.dumps(parsed_event),
+                }
+            ).fetchone()
+
+            db.commit()
+            return result is not None
+
+        except Exception as e:
+            db.rollback()
+            logger.error(
+                "marketplace_event_insert_failed",
+                extra={
+                    "message_id": parsed_event.get("message_id"),
+                    "error": str(e)
+                }
+            )
+            raise
+
+        finally:
+            db.close()
+
+    def _resolve_sku_from_mercari_listing_id(self, mercari_listing_id: str) -> Optional[str]:
+        db = SessionLocal()
+
+        try:
+            row = db.execute(
+                text("""
+                    select 
+                        u.unit_code as sku
+                    from listings l
+                    join channels c on c.id = l.channel_id
+                    join listing_units lu on lu.listing_id = l.id
+                    join units u on u.id = lu.unit_id
+                    where lower(c.name) = 'mercari'
+                    and l.channel_listing_id = :mercari_listing_id
+                    limit 1
+                """),
+                {"mercari_listing_id": mercari_listing_id}
+            ).fetchone()
+
+            return row.sku if row else None
+
+        except Exception as e:
+            logger.error(
+                "sku_resolution_failed",
+                extra={
+                    "mercari_listing_id": mercari_listing_id,
+                    "error": str(e)
+                }
+            )
+            return None
+
+        finally:
+            db.close()
+            
     def _parse_with_ai(self, email_data: Dict) -> Optional[Dict]:
         """
         Parse email using Claude AI

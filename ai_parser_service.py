@@ -32,7 +32,7 @@ class AIParserService:
                     'level_3_women_shoes': ['Ankle Boots & Booties', 'Athletic Shoes', 'Combat & Moto Boots', 'Espadrilles', 'Flats & Loafers', 'Heeled Boots', 'Heels', 'Lace Up Boots', 'Moccasins', 'Mules & Clogs', 'Over the Knee Boots', 'Platforms', 'Sandals', 'Slippers', 'Sneakers', 'Wedges', 'Winter & Rain Boots', 'None'],
                     'level_3_kids_shoes': ['Baby & Walker', 'Boots', 'Dress Shoes', 'Moccasins', 'Rain & Snow Boots', 'Sandals & Flip Flops', 'Slippers', 'Sneakers', 'Water Shoes', 'None']
                 },
-                'conditions': ['New With Tags (NWT)', 'Like New', 'Good', 'Fair'],
+                'conditions': ['New With Tags (NWT)', 'New Without Tags (NWOT)', 'Like New', 'Good', 'Fair'],
                 'colors': ['Red', 'Pink', 'Orange', 'Yellow', 'Green', 'Blue', 'Purple', 'Gold', 'Silver', 'Black', 'Gray', 'White', 'Cream', 'Brown', 'Tan']
             },
             'mercari': {
@@ -109,6 +109,7 @@ class AIParserService:
             logger.debug(f"Parsed data: {json.dumps(parsed_data, indent=2)}")
 
             parsed_data = self._apply_shoe_size_category_overrides(parsed_data, listing_data)
+            parsed_data = self._apply_condition_overrides(parsed_data, listing_data)
             logger.debug(f"Post-override parsed data: {json.dumps(parsed_data, indent=2)}")
             
             return parsed_data
@@ -117,6 +118,44 @@ class AIParserService:
             logger.error(f"Error parsing with AI: {e}")
             # Return fallback structure
             return self._create_fallback_data(listing_data)
+
+    def _map_ebay_condition_to_poshmark(self, ebay_condition: str) -> str:
+        condition = (ebay_condition or '').strip().lower()
+
+        if 'new with box' in condition:
+            return 'New With Tags (NWT)'
+
+        if 'new without box' in condition:
+            return 'New Without Tags (NWOT)'
+
+        if 'new with defects' in condition:
+            return 'Like New'
+
+        if condition == 'new' or condition.startswith('new '):
+            return 'New Without Tags (NWOT)'
+
+        if 'excellent' in condition:
+            return 'Like New'
+
+        if 'good' in condition:
+            return 'Good'
+
+        if 'fair' in condition:
+            return 'Fair'
+
+        return 'Good'
+
+    def _apply_condition_overrides(self, parsed_data: Dict, listing_data: Dict) -> Dict:
+        ebay_condition = listing_data.get('ebay_condition', '')
+        poshmark_condition = self._map_ebay_condition_to_poshmark(ebay_condition)
+
+        parsed_data.setdefault('poshmark', {})
+        parsed_data.setdefault('category_data', {})
+
+        parsed_data['poshmark']['condition'] = poshmark_condition
+        parsed_data['category_data']['condition'] = poshmark_condition
+
+        return parsed_data
     
     def _apply_shoe_size_category_overrides(self, parsed_data: Dict, listing_data: Dict) -> Dict:
         """
@@ -222,14 +261,27 @@ class AIParserService:
 
     def _normalize_size_for_marketplaces(self, raw_size: str) -> str:
         """
-        Convert 6.5Y -> 6.5, 13C -> 13, 10M -> 10
-        Leaves 8W alone because W may mean wide.
+        Keep kids sizes with suffixes:
+        - 6.5Y stays 6.5Y
+        - 13C stays 13C
+        - 10M becomes 10
+        - 8W stays 8W because W may mean wide
         """
         if not raw_size:
             return ''
 
         cleaned = raw_size.strip().upper().replace(' ', '')
-        cleaned = re.sub(r'(TD|T|Y|C|M)$', '', cleaned).strip()
+
+        # Normalize toddler markers to C
+        cleaned = re.sub(r'(TD|T)$', 'C', cleaned)
+
+        # Preserve youth/child suffixes
+        if re.match(r'^\d{1,2}(?:\.\d)?[YC]$', cleaned):
+            return cleaned
+
+        # Remove men's marker only
+        cleaned = re.sub(r'M$', '', cleaned).strip()
+
         return cleaned
 
     def _detect_size_type(self, title: str, ebay_category: str, raw_size: str) -> str:
@@ -307,12 +359,24 @@ class AIParserService:
 
     def _mercari_kids_age_bucket(self, normalized_size: str, kids_gender: str) -> str:
         """
-        Map kids numeric size to Mercari's exact level_3 buckets.
+        Map kids shoe size to Mercari's exact level_3 buckets.
+        Y sizes should usually be Boys/Girls (4+).
+        C/T toddler-child sizes should usually be Boys/Girls 2T-5T.
         """
         prefix = 'Girls' if kids_gender == 'girls' else 'Boys'
 
+        size_text = (normalized_size or '').upper().strip()
+
+        if size_text.endswith('Y'):
+            return f'{prefix} (4+)'
+
+        if size_text.endswith('C'):
+            return f'{prefix} 2T-5T'
+
+        number_only = re.sub(r'[^0-9.]', '', size_text)
+
         try:
-            size_val = float(normalized_size)
+            size_val = float(number_only)
         except (TypeError, ValueError):
             return f'{prefix} (4+)'
 
@@ -377,7 +441,7 @@ class AIParserService:
 # - Kids > Shoes subcategories: {', '.join(self.platform_specs['poshmark']['categories']['level_3_kids_shoes'])}
 
 # Poshmark Conditions (EXACT TEXT): {', '.join(self.platform_specs['poshmark']['conditions'])}
-# Poshmark Colors (choose ONE): {', '.join(self.platform_specs['poshmark']['colors'])}
+# Poshmark Colors: Choose up to TWO colors when clearly present in the title. Return as a list.: {', '.join(self.platform_specs['poshmark']['colors'])}
 # Poshmark Sizes: Standard US sizes (4, 4.5, 5, 5.5... up to 16) OR custom text
 
 # MERCARI PLATFORM SPECS:
@@ -398,14 +462,25 @@ class AIParserService:
 #   IF Women > Shoes → Use format "US (EU)":
 #     Available: 4 (35), 4.5 (35), 5 (35.5), 5.5 (36), 6 (36.5), 6.5 (37), 7 (37.5), 7.5 (38), 8 (38.5), 8.5 (39), 9 (39.5), 9.5 (40), 10 (40.5), 10.5 (41), 11 (41.5), 11.5 (42), 12 (42.5), 12.5 (43), 13 (43.5), 13.5 (44), 14 & Up (44.5), 3.5 and below
   
-#   IF Kids > Boys shoes OR Kids > Girls shoes → Use ONLY number (NO EU):
-#     Available: 0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13, 13.5
+#   IF Kids > Boys shoes OR Kids > Girls shoes → Preserve youth/child suffixes when present:
+#       Examples:
+#       4Y
+#       4.5Y
+#       6Y
+#       10C
+#       10.5C
+#       13C
+
+#       If no suffix is present, use numeric size only.
+#       Never convert 4Y into 4.
+#       Never convert 13C into 13.
 
 # CRITICAL: Check the category level_1 and level_2 to determine which size format to use!
 
 # 2. SIZE EXTRACTION:
-#    - Remove suffixes: "6.5Y" → "6.5", "10M" → "10", "8W" → "8"
-#    - For Poshmark: Just the number (e.g., "10.5")
+#    - Remove suffixes: "6.5Y" → "6.5Y", "10M" → "10", "8W" → "8"
+#    - For Poshmark adult sizes: use just the number.
+#    - For Poshmark kids sizes: preserve suffixes like 4Y, 6.5Y, 10C, and 13C when present.
 #    - For Mercari: Format depends on category:
    
 #    **MEN'S SHOES** - Format "US (EU)":
@@ -420,13 +495,13 @@ class AIParserService:
 #    11.5 (42), 12 (42.5), 12.5 (43), 13 (43.5), 13.5 (44), 14 & Up (44.5)
    
    
-#    **KIDS sHOES (Boys/Girls)** - Format: Just number (NO EU):
+#    **KIDS SHOES (Boys/Girls)** - Format: Just number (NO EU):
 #    0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 
 #    9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13, 13.5
    
 #    **CRITICAL RULES:**
 #    - If category is Men/Women + Shoes → Use "US (EU)" format
-#    - If category is Kids + (Boys Shoes OR Girls Shoes) → Use ONLY the number
+#    - If category is Kids + (Boys Shoes OR Girls Shoes) → Preserve Y/C suffixes when present, such as 4Y, 6.5Y, 13C
 #    - Match the EXACT format from the tables above
 
 # CRITICAL INSTRUCTIONS:
@@ -438,9 +513,11 @@ class AIParserService:
 #    - For Mercari Kids: Use "Boys shoes" or "Girls shoes" then age subcategory
 
 # 2. SIZE EXTRACTION:
-#    - Normalize kids/adult markers carefully: "6.5Y" → "6.5" only after recognizing it is youth/kids, "13C" → "13" only after recognizing it is child/kids, "10M" may mean men's, and "8W" may mean wide so do NOT assume W always means women's
-#    - For Poshmark: Just the number (e.g., "10.5")
-#    - For Mercari: Format "US (EU)" (e.g., "10.5 (43.5)")
+#    - Normalize kids/adult markers carefully: "6.5Y" → "6.5Y" only after recognizing it is youth/kids, "13C" → "13C" only after recognizing it is child/kids, "10M" may mean men's, and "8W" may mean wide so do NOT assume W always means women's
+#    - For Poshmark adult sizes: use just the number.
+#    - For Poshmark kids sizes: preserve suffixes like 4Y, 6.5Y, 10C, and 13C when present.
+#    - For Mercari Adult Men/Women Shoes: use "US (EU)" format
+#    - For Mercari Kids Shoes: preserve kids size codes like 4Y, 6.5Y, 13C
 #    - Common conversions: 10=43, 10.5=43.5, 11=44, 11.5=44.5, 12=45, etc.
 
 # 3. CONDITION MAPPING:
@@ -451,7 +528,7 @@ class AIParserService:
 #    - "Poor" / "For Parts" → Mercari: "ConditionPoor" (Poshmark doesn't have Poor)
 
 # 4. COLOR:
-#    - For Poshmark: Pick PRIMARY color from allowed list
+#    - For Poshmark: Pick up to TWO colors from the allowed list when clearly present. If only one is clear, return one.
 #    - For Mercari: Not needed (skip)
 
 # 5. BRAND:
@@ -469,7 +546,7 @@ class AIParserService:
 #     }},
 #     "condition": "Good",
 #     "size": "10.5",
-#     "color": "Red",
+#     "color": ["Black", "White"]
 #     "brand": "Nike"
 #   }},
 #   "mercari": {{
@@ -485,7 +562,7 @@ class AIParserService:
 #   "item_specifics": {{
 #     "Brand": "Nike",
 #     "Size": "10.5",
-#     "Color": "Red",
+#     "Color": ["Black", "White"],
 #     "Condition": "Good",
 #     "Department": "Men",
 #     "Style": "Sneakers"
@@ -495,7 +572,7 @@ class AIParserService:
 # IMPORTANT:
 # - Use EXACT category names from the lists provided
 # - Use EXACT condition values (Poshmark: full text, Mercari: data-testid)
-# - Size must be clean number for Poshmark, "US (EU)" format for Mercari
+# - Adult size should be clean number for Poshmark and "US (EU)" for Mercari. Kids sizes should preserve suffixes like 4Y, 6.5Y, 13C, and 10C when available.
 # - If unsure about a field, use "Other" for categories or best guess
 # - Brand should match exactly what's in eBay catalog data
 # """
@@ -529,7 +606,7 @@ Categories (3-level structure):
 - Kids > Shoes subcategories: {', '.join(self.platform_specs['poshmark']['categories']['level_3_kids_shoes'])}
 
 Poshmark Conditions (EXACT TEXT): {', '.join(self.platform_specs['poshmark']['conditions'])}
-Poshmark Colors (choose ONE): {', '.join(self.platform_specs['poshmark']['colors'])}
+Poshmark Colors: Choose up to TWO colors when clearly present in the title. Return as a list: {', '.join(self.platform_specs['poshmark']['colors'])}
 Poshmark Sizes: Standard US sizes (4, 4.5, 5, 5.5... up to 16) OR custom text
 
 MERCARI PLATFORM SPECS:
@@ -549,15 +626,25 @@ Mercari Sizes (CATEGORY-SPECIFIC - VERY IMPORTANT):
   
   IF Women > Shoes → Use format "US (EU)":
     Available: 4 (35), 4.5 (35), 5 (35.5), 5.5 (36), 6 (36.5), 6.5 (37), 7 (37.5), 7.5 (38), 8 (38.5), 8.5 (39), 9 (39.5), 9.5 (40), 10 (40.5), 10.5 (41), 11 (41.5), 11.5 (42), 12 (42.5), 12.5 (43), 13 (43.5), 13.5 (44), 14 & Up (44.5), 3.5 and below
-  
-  IF Kids > Boys shoes OR Kids > Girls shoes → Use ONLY number (NO EU):
-    Available: 0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13, 13.5
+  IF Kids > Boys shoes OR Kids > Girls shoes → Preserve youth/child suffixes when present:
+  Examples:
+  4Y
+  4.5Y
+  6Y
+  10C
+  10.5C
+  13C
+
+If no suffix is present, use numeric size only.
+Never convert 4Y into 4.
+Never convert 13C into 13.
 
 CRITICAL: Check the category level_1 and level_2 to determine which size format to use!
 
 2. SIZE EXTRACTION:
-   - Normalize kids/adult markers carefully: "6.5Y" → "6.5" only after recognizing it is youth/kids, "13C" → "13" only after recognizing it is child/kids, "10M" may mean men's, and "8W" may mean wide so do NOT assume W always means women's
-   - For Poshmark: Just the number (e.g., "10.5")
+   - Normalize kids/adult markers carefully: "6.5Y" → "6.5Y" only after recognizing it is youth/kids, "13C" → "13C" only after recognizing it is child/kids, "10M" may mean men's, and "8W" may mean wide so do NOT assume W always means women's
+   - For Poshmark adult sizes: use just the number.
+   - For Poshmark kids sizes: preserve suffixes like 4Y, 6.5Y, 10C, and 13C when present.
    - For Mercari: Format depends on category:
    
    **MEN'S SHOES** - Format "US (EU)":
@@ -572,13 +659,22 @@ CRITICAL: Check the category level_1 and level_2 to determine which size format 
    11.5 (42), 12 (42.5), 12.5 (43), 13 (43.5), 13.5 (44), 14 & Up (44.5)
    
    
-   **KIDS sHOES (Boys/Girls)** - Format: Just number (NO EU):
-   0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 
-   9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13, 13.5
+   **KIDS SHOES (Boys/Girls)** - Format:
+    Preserve suffixes when known.
+
+    Examples:
+    4Y
+    5Y
+    6.5Y
+    10C
+    12C
+    13C
+
+    If suffix unknown, use numeric only.
    
    **CRITICAL RULES:**
    - If category is Men/Women + Shoes → Use "US (EU)" format
-   - If category is Kids + (Boys Shoes OR Girls Shoes) → Use ONLY the number
+   - If category is Kids + (Boys Shoes OR Girls Shoes) → Preserve Y/C suffixes when present, such as 4Y, 6.5Y, 10C, 13C
    - Match the EXACT format from the tables above
 
 CRITICAL INSTRUCTIONS:
@@ -613,9 +709,13 @@ CRITICAL INSTRUCTIONS:
    - NEVER invent category names not in the provided lists
 
 2. SIZE EXTRACTION:
-   - Remove suffixes: "6.5Y" → "6.5", "10M" → "10", "8W" → "8"
-   - For Poshmark: Just the number (e.g., "10.5")
-   - For Mercari: Format "US (EU)" (e.g., "10.5 (43.5)")
+   - Preserve kids suffixes: "6.5Y" → "6.5Y", "13C" → "13C"
+   - Remove adult men's marker only when clear: "10M" → "10"
+   - Do not remove W automatically because "8W" may mean wide
+   - For Poshmark adult sizes: use just the number.
+   - For Poshmark kids sizes: preserve suffixes like 4Y, 6.5Y, 10C, and 13C when present.
+   - For Mercari Adult Men/Women Shoes: use "US (EU)" format
+   - For Mercari Kids Shoes: preserve kids size codes like 4Y, 6.5Y, 13C
    - Common conversions: 10=43, 10.5=43.5, 11=44, 11.5=44.5, 12=45, etc.
 
 3. CONDITION MAPPING:
@@ -627,7 +727,7 @@ CRITICAL INSTRUCTIONS:
    - "Poor" / "For Parts" → Mercari: "ConditionPoor" (Poshmark doesn't have Poor)
 
 4. COLOR:
-   - For Poshmark: Pick PRIMARY color from allowed list
+   - For Poshmark: Pick up to TWO colors from the allowed list when clearly present. If only one is clear, return one.
    - For Mercari: Not needed (skip)
 
 5. BRAND:
@@ -645,7 +745,7 @@ Return ONLY this JSON structure (no other text):
     }},
     "condition": "Good",
     "size": "10.5",
-    "color": "Red",
+    "color": ["Black", "White"],
     "brand": "Nike"
   }},
   "mercari": {{
@@ -661,7 +761,7 @@ Return ONLY this JSON structure (no other text):
   "item_specifics": {{
     "Brand": "Nike",
     "Size": "10.5",
-    "Color": "Red",
+    "color": ["Black", "White"],
     "Condition": "Good",
     "Department": "Men",
     "Style": "Sneakers"
@@ -670,8 +770,8 @@ Return ONLY this JSON structure (no other text):
 
 IMPORTANT:
 - Use EXACT category names from the lists provided
-- Use EXACT condition values (Poshmark: full text, Mercari: data-testid)
-- Size must be clean number for Poshmark, "US (EU)" format for Mercari
+- Use EXACT condition values (Poshmark: full text, Mercari: data-testid) 
+- Adult size should be clean number for Poshmark and "US (EU)" for Mercari. Kids sizes should preserve suffixes like 4Y, 6.5Y, 13C, and 10C when available.
 - If unsure about a field, use "Other" for categories or best guess
 - Brand should match exactly what's in eBay catalog data
 """

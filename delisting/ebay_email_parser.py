@@ -4,7 +4,7 @@ Optimized for speed and cost (no AI required for eBay)
 """
 import logging
 import re
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ class EbayEmailParser:
         from_email_lower = from_email.lower()
         return any(sender in from_email_lower for sender in self.ebay_senders)
     
-    def parse(self, email_data: Dict) -> Optional[Dict]:
+    def parse(self, email_data: Dict) -> List[Dict]:
         """
         Parse eBay sale email
         
@@ -62,12 +62,12 @@ class EbayEmailParser:
             # Verify this is an eBay email
             if not self.is_ebay_email(from_email):
                 logger.warning(f"Not an eBay email: {from_email}")
-                return None
+                return []
             
             # Verify this is a sale notification
             if not self._is_sale_notification(subject):
                 logger.debug(f"Not a sale notification: {subject}")
-                return None
+                return []
             
             result = {
                 'listing_id': None,  # eBay doesn't include this in email
@@ -87,14 +87,66 @@ class EbayEmailParser:
             # Return None if critical fields are missing
             if not result['order_id'] and not result['title']:
                 logger.warning("Could not extract order_id or title from eBay email")
-                return None
+                return []
             
-            return result
+            order_id = result.get('order_id')
+
+            if not order_id:
+                return [result]  # fallback
+
+            order_items = self._get_order_items_from_ebay(order_id)
+
+            if not order_items:
+                return [result]  # fallback
+
+            results = []
+
+            for item in order_items:
+                enriched = result.copy()
+                enriched['listing_id'] = item.get('listing_id')
+                enriched['sku'] = item.get('sku')
+                results.append(enriched)
+
+            return results
             
         except Exception as e:
             logger.error(f"Error parsing eBay email: {e}")
-            return None
-    
+            return []
+    def _get_order_items_from_ebay(self, order_id: str) -> List[Dict]:
+        """
+        Fetch all items (item_id + SKU) from eBay order
+        """
+        try:
+            from ebay_api import ebay_api
+
+            response = ebay_api.api.execute('GetOrders', {
+                'OrderIDArray': {'OrderID': order_id}
+            })
+
+            results = []
+
+            if response.reply.OrderArray:
+                order = response.reply.OrderArray.Order[0]
+
+                if order.TransactionArray:
+                    transactions = order.TransactionArray.Transaction
+
+                    for transaction in transactions:
+                        item_id = transaction.Item.ItemID
+                        sku = transaction.Item.SKU if hasattr(transaction.Item, 'SKU') else None
+
+                        results.append({
+                            'listing_id': item_id,
+                            'sku': sku
+                        })
+
+            logger.info(f"Fetched {len(results)} items from eBay order {order_id}")
+            return results
+
+        except Exception as e:
+            logger.error(f"Error fetching eBay order items: {e}")
+            return []
+        
     def _is_sale_notification(self, subject: str) -> bool:
         """Check if subject indicates a sale"""
         sale_keywords = [
@@ -309,9 +361,11 @@ jppast10
     print(expected)
     
     print("\nMatches:")
+    parsed_item = result[0] if result else {}
+
     for key in expected:
-        match = "✓" if result.get(key) == expected[key] else "✗"
-        print(f"{match} {key}: {result.get(key)} == {expected[key]}")
+        match = "✓" if parsed_item.get(key) == expected[key] else "✗"
+        print(f"{match} {key}: {parsed_item.get(key)} == {expected[key]}")
 
 
 if __name__ == '__main__':
