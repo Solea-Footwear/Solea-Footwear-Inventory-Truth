@@ -83,7 +83,13 @@ class AIParserService:
         try:
             import anthropic
             
-            client = anthropic.Anthropic(api_key=self.api_key)
+            client = anthropic.Anthropic(
+                api_key=self.api_key,
+                timeout=30.0,
+                max_retries=1
+            )
+            
+            logger.info(f"[AI] Parsing title: {listing_data.get('title', '')[:80]}")
             
             message = client.messages.create(
                 model="claude-sonnet-4-20250514",
