@@ -57,9 +57,22 @@ class SyncService:
 
             # ! new code
             # ✨ NEW: Get all SKUs from database
-            all_units = self.db.query(Unit).all()
-            our_skus = [unit.unit_code for unit in all_units if unit.unit_code][:500]
-            logger.info(f"TEST MODE: limiting sync to {len(our_skus)} SKUs")
+            broken_units = (
+                self.db.query(Unit)
+                .outerjoin(ListingTemplate, ListingTemplate.product_id == Unit.product_id)
+                .filter(Unit.status == "listed")
+                .filter(
+                    (ListingTemplate.id == None) |
+                    (ListingTemplate.photos == None) |
+                    (ListingTemplate.category_mappings == None)
+                )
+                .limit(750)
+                .all()
+            )
+            
+            our_skus = [unit.unit_code for unit in broken_units if unit.unit_code]
+            
+            logger.info(f"REPAIR MODE: refreshing {len(our_skus)} broken/missing-template SKUs")
             
             logger.info(f"Found {len(our_skus)} SKUs in database")
             
