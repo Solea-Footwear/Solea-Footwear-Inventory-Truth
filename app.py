@@ -5,7 +5,7 @@ Main API endpoints for inventory management system
 import os
 import logging
 from datetime import datetime
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
 from sqlalchemy import func, desc
@@ -2947,6 +2947,9 @@ def get_return_monitoring_status():
             'error': str(e)
         }), 500
 
+@app.route('/returns-dashboard')
+def returns_dashboard():
+    return send_file('returns_dashboard.html')
 
 # ============================================
 # EBAY OAUTH 2.0 ENDPOINTS
