@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: solea_postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME:-inventory_db}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./add_sold_columns.sql:/docker-entrypoint-initdb.d/03-add_sold_columns.sql
+      - ./seed_test_data.sql:/docker-entrypoint-initdb.d/04-seed_test_data.sql
+    networks:
+      - solea_network
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: solea_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@gmail.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - solea_network
+    depends_on:
+      - postgres
+
+networks:
+  solea_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  pgadmin_data:

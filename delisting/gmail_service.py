@@ -534,6 +534,91 @@ class GmailService:
             return None
 
 
+    def get_emails_from_label(self, label_name: str, max_results: int = 100) -> List[Dict]:
+        """
+        Get emails from a specific Gmail label
+        
+        Args:
+            label_name: Name of the Gmail label
+            max_results: Maximum number of emails to retrieve
+        
+        Returns:
+            list: List of email messages
+        """
+        if not self.service:
+            logger.error("Gmail service not initialized")
+            return []
+        
+        try:
+            # Get label ID
+            label_id = self._get_label_id(label_name)
+            
+            if not label_id:
+                logger.error(f"Label '{label_name}' not found")
+                return []
+            
+            # Get messages with this label
+            results = self.service.users().messages().list(
+                userId='me',
+                labelIds=[label_id],
+                maxResults=max_results
+            ).execute()
+            
+            messages = results.get('messages', [])
+            
+            if not messages:
+                logger.debug(f"No messages found in label '{label_name}'")
+                return []
+            
+            # Get full message details
+            full_messages = []
+            for msg in messages:
+                message = self.service.users().messages().get(
+                    userId='me',
+                    id=msg['id'],
+                    format='full'
+                ).execute()
+                
+                # Parse message
+                parsed = self._parse_message(message)
+                if parsed:
+                    full_messages.append(parsed)
+            
+            logger.info(f"Retrieved {len(full_messages)} messages from label '{label_name}'")
+            return full_messages
+            
+        except HttpError as error:
+            logger.error(f"Gmail API error: {error}")
+            return []
+        except Exception as e:
+            logger.error(f"Error getting emails from label: {e}")
+            return []
+    
+    def _get_label_id(self, label_name: str) -> Optional[str]:
+        """
+        Get label ID by name
+        
+        Args:
+            label_name: Label name
+        
+        Returns:
+            str: Label ID or None
+        """
+        try:
+            results = self.service.users().labels().list(userId='me').execute()
+            labels = results.get('labels', [])
+            
+            for label in labels:
+                if label['name'] == label_name:
+                    return label['id']
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting label ID: {e}")
+            return None
+
+
     def move_to_label(self, message_id: str, label_name: str, remove_inbox: bool = False) -> bool:
         """
         Move email to a label (optionally remove from inbox)
