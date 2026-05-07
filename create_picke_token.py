@@ -1,4 +1,4 @@
-from delisting.gmail_service import GmailService
+from gmail_service import GmailService
 import os 
 
 gmail = GmailService()
