@@ -247,8 +247,16 @@ class SyncService:
                 }
                 
                 # Get AI-parsed data
-                ai_parsed = ai_parser.parse_listing_for_crosslisting(listing_for_ai)
-                
+                try:
+                    ai_parsed = ai_parser.parse_listing_for_crosslisting(listing_for_ai)
+                except Exception as e:
+                    logger.warning(f"AI timeout/failure for {item_id}, using fallback: {e}")
+                    ai_parsed = {
+                        "item_specifics": ebay_item.get("item_specifics", {}),
+                        "poshmark": {},
+                        "mercari": {}
+                    }
+                                
                 # Update ebay_item with AI-extracted item_specifics
                 ebay_item['item_specifics'] = ai_parsed.get('item_specifics', {})
                 
