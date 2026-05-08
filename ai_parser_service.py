@@ -85,7 +85,7 @@ class AIParserService:
             
             client = anthropic.Anthropic(
                 api_key=self.api_key,
-                timeout=15.0,
+                timeout=10.0,
                 max_retries=0
             )
             
