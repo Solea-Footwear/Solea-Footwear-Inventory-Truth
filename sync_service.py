@@ -231,45 +231,63 @@ class SyncService:
         if full_details:
             # Use full details instead of basic data
             ebay_item = full_details
-            
-            # ✨ NEW: Use AI to parse item specifics for cross-listing
-            from ai_parser_service import AIParserService
-            
-            try:
-                ai_parser = AIParserService()
-                
-                # Prepare data for AI parsing
-                listing_for_ai = {
-                    'title': ebay_item['title'],
-                    'description': ebay_item['description'],
-                    'ebay_condition': ebay_item.get('condition_display_name', ''),
-                    'category_name': ebay_item.get('category_name', ''),  # ✅ Now available!
-                    'brand': ebay_item.get('item_specifics', {}).get('Brand', '')  # ✅ Now available!
-                }
-                
-                # Get AI-parsed data
-                try:
-                    ai_parsed = ai_parser.parse_listing_for_crosslisting(listing_for_ai)
-                except Exception as e:
-                    logger.warning(f"AI timeout/failure for {item_id}, using fallback: {e}")
-                    ai_parsed = {
-                        "item_specifics": ebay_item.get("item_specifics", {}),
-                        "poshmark": {},
-                        "mercari": {}
-                    }
-                                
-                # Update ebay_item with AI-extracted item_specifics
-                ebay_item['item_specifics'] = ai_parsed.get('item_specifics', {})
-                
-                # Store platform-specific data for later use
-                ebay_item['poshmark_data'] = ai_parsed.get('poshmark', {})
-                ebay_item['mercari_data'] = ai_parsed.get('mercari', {})
-                
-                logger.info(f"AI extracted item specifics: {list(ebay_item['item_specifics'].keys())}")
-                
-            except Exception as e:
-                logger.error(f"AI parsing failed for {item_id}: {e}")
-                
+
+            # Prepare fallback/non-AI Poshmark data for template repair
+            item_specifics = ebay_item.get("item_specifics", {})
+
+            title_lower = ebay_item.get("title", "").lower()
+            category_lower = ebay_item.get("category_name", "").lower()
+
+            department = "Men"
+            level_2 = "Shoes"
+
+            if any(x in title_lower for x in ["women", "womens", "ladies"]):
+                department = "Women"
+            elif (
+                any(x in title_lower for x in ["boys", "girls", "youth", "kids", "toddler", "baby", "child"])
+                or any(x in category_lower for x in ["boys", "girls", "kids"])
+            ):
+                department = "Kids"
+                level_2 = "Boys shoes" if "boy" in title_lower or "boy" in category_lower else "Girls shoes"
+
+            level_3 = "Sneakers"
+
+            if "boot" in title_lower:
+                level_3 = "Boots"
+            elif "sandal" in title_lower or "slide" in title_lower or "flip flop" in title_lower:
+                level_3 = "Sandals & Flip Flops" if department == "Kids" else "Sandals"
+            elif "loafer" in title_lower or "slip on" in title_lower or "slip-on" in title_lower:
+                level_3 = "Loafers & Slip-Ons" if department == "Men" else "Flats & Loafers"
+            elif "slipper" in title_lower:
+                level_3 = "Slippers"
+
+            ai_parsed = {
+                "item_specifics": item_specifics,
+                "poshmark": {
+                    "category": {
+                        "level_1": department,
+                        "level_2": level_2,
+                        "level_3": level_3
+                    },
+                    "condition": "Good",
+                    "size": (
+                        item_specifics.get("US Shoe Size")
+                        or item_specifics.get("Size")
+                        or item_specifics.get("Shoe Size")
+                        or ""
+                    ),
+                    "color": ["Black"],
+                    "brand": item_specifics.get("Brand", "")
+                },
+                "mercari": {}
+            }
+
+            ebay_item["item_specifics"] = ai_parsed.get("item_specifics", {})
+            ebay_item["poshmark_data"] = ai_parsed.get("poshmark", {})
+            ebay_item["mercari_data"] = ai_parsed.get("mercari", {})
+
+            logger.info(f"Fallback template data prepared: {list(ebay_item['item_specifics'].keys())}")
+
         else:
             # Fallback to basic data if GetItem fails
             logger.warning(f"Could not fetch full details for {item_id}, using basic data")
