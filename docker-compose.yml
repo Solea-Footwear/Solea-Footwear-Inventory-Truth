@@ -20,6 +20,7 @@ services:
       - ./migrations/2026_05_14_ebay_oauth_tokens.sql:/docker-entrypoint-initdb.d/05-ebay_oauth_tokens.sql
       - ./migrations/2026_05_14_epic1_product_columns.sql:/docker-entrypoint-initdb.d/06-epic1_product_columns.sql
       - ./migrations/2026_05_14_epic2_unit_sku_constraint.sql:/docker-entrypoint-initdb.d/07-epic2_unit_sku_constraint.sql
+      - ./migrations/2026_05_14_epic3_channel_multi_qty.sql:/docker-entrypoint-initdb.d/08-epic3_channel_multi_qty.sql
     networks:
       - solea_network
     healthcheck:

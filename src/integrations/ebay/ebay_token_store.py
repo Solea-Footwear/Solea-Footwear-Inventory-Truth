@@ -1,28 +1,25 @@
 """
 Persistent eBay OAuth token store with Fernet-encrypted refresh tokens
-and lazy refresh-on-read of the short-lived access token.
+and lazy refresh-on-read of the short-lived access token (psycopg2).
 
 Public surface:
-  * `get_valid_access_token()`  — returns a non-expired access token, auto-refreshing if needed
-  * `save_tokens(...)`          — upserts a (access, refresh, expiries, scope) tuple after the OAuth callback
-
-Internal: the table has at most one row (the active credential).  We don't
-support multi-account; if eBay reauth happens, the row is updated in place.
+  * get_valid_access_token()  — returns a non-expired access token, auto-refreshing if needed
+  * save_tokens(...)          — upserts a (access, refresh, expiries, scope) tuple after OAuth callback
 """
 import logging
 import os
 from datetime import datetime, timedelta
 from typing import Optional
 
+import psycopg2
+import psycopg2.extras
 from cryptography.fernet import Fernet, InvalidToken
 
-from src.backend.db.database import SessionLocal
-from src.backend.db.models.ebay_oauth_token import EbayOAuthToken
+from src.backend.db.database import _dsn
 from src.integrations.ebay import ebay_oauth
 
 logger = logging.getLogger(__name__)
 
-# Refresh the access token if it's expiring within this window
 REFRESH_LEAD_TIME = timedelta(minutes=5)
 
 
@@ -50,7 +47,9 @@ def _decrypt(ciphertext: str) -> str:
         ) from e
 
 
-# ----- Public API ------------------------------------------------------------
+def _connect():
+    return psycopg2.connect(_dsn())
+
 
 def save_tokens(
     *,
@@ -60,71 +59,84 @@ def save_tokens(
     refresh_expires_at: datetime,
     scope: Optional[str] = None,
 ) -> None:
-    """Upsert the single token row.  Encrypts refresh_token on the way in."""
+    """Upsert the single token row. Encrypts refresh_token on the way in."""
     encrypted_refresh = _encrypt(refresh_token)
-    db = SessionLocal()
+    conn = _connect()
     try:
-        row = db.query(EbayOAuthToken).order_by(EbayOAuthToken.updated_at.desc()).first()
-        if row is None:
-            row = EbayOAuthToken(
-                access_token=access_token,
-                refresh_token=encrypted_refresh,
-                access_expires_at=access_expires_at,
-                refresh_expires_at=refresh_expires_at,
-                scope=scope,
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT id FROM ebay_oauth_tokens ORDER BY updated_at DESC LIMIT 1"
             )
-            db.add(row)
-        else:
-            row.access_token = access_token
-            row.refresh_token = encrypted_refresh
-            row.access_expires_at = access_expires_at
-            row.refresh_expires_at = refresh_expires_at
-            row.scope = scope
-            row.updated_at = datetime.utcnow()
-        db.commit()
+            row = cur.fetchone()
+            if row is None:
+                cur.execute(
+                    """
+                    INSERT INTO ebay_oauth_tokens
+                        (id, access_token, refresh_token, access_expires_at,
+                         refresh_expires_at, scope, created_at, updated_at)
+                    VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, now(), now())
+                    """,
+                    [access_token, encrypted_refresh, access_expires_at,
+                     refresh_expires_at, scope],
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE ebay_oauth_tokens
+                    SET access_token=%s, refresh_token=%s, access_expires_at=%s,
+                        refresh_expires_at=%s, scope=%s, updated_at=now()
+                    WHERE id=%s
+                    """,
+                    [access_token, encrypted_refresh, access_expires_at,
+                     refresh_expires_at, scope, row["id"]],
+                )
+        conn.commit()
     finally:
-        db.close()
-
-
-def _get_row(db) -> Optional[EbayOAuthToken]:
-    return db.query(EbayOAuthToken).order_by(EbayOAuthToken.updated_at.desc()).first()
+        conn.close()
 
 
 def has_tokens() -> bool:
-    db = SessionLocal()
+    conn = _connect()
     try:
-        return _get_row(db) is not None
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM ebay_oauth_tokens LIMIT 1")
+            return cur.fetchone() is not None
     finally:
-        db.close()
+        conn.close()
 
 
 def get_valid_access_token() -> str:
-    """
-    Return a non-expired access token, calling the eBay refresh endpoint if
-    the stored access token is within REFRESH_LEAD_TIME of expiry.
-    Raises RuntimeError if no tokens are stored yet.
-    """
-    db = SessionLocal()
+    """Return a non-expired access token, refreshing via eBay if within REFRESH_LEAD_TIME."""
+    conn = _connect()
     try:
-        row = _get_row(db)
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT * FROM ebay_oauth_tokens ORDER BY updated_at DESC LIMIT 1"
+            )
+            row = cur.fetchone()
+
         if row is None:
             raise RuntimeError(
-                "No eBay OAuth tokens stored. "
-                "Visit /oauth/ebay/start to grant consent."
+                "No eBay OAuth tokens stored. Visit /oauth/ebay/start to grant consent."
             )
-        if row.access_expires_at - datetime.utcnow() > REFRESH_LEAD_TIME:
-            return row.access_token
 
-        # Refresh path
+        if row["access_expires_at"] - datetime.utcnow() > REFRESH_LEAD_TIME:
+            return row["access_token"]
+
         logger.info("eBay access token within %s of expiry — refreshing", REFRESH_LEAD_TIME)
-        refresh_plaintext = _decrypt(row.refresh_token)
+        refresh_plaintext = _decrypt(row["refresh_token"])
         new_access, new_expires, new_scope = ebay_oauth.refresh_access_token(refresh_plaintext)
-        row.access_token = new_access
-        row.access_expires_at = new_expires
-        if new_scope:
-            row.scope = new_scope
-        row.updated_at = datetime.utcnow()
-        db.commit()
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE ebay_oauth_tokens
+                SET access_token=%s, access_expires_at=%s, scope=COALESCE(%s, scope), updated_at=now()
+                WHERE id=%s
+                """,
+                [new_access, new_expires, new_scope, row["id"]],
+            )
+        conn.commit()
         return new_access
     finally:
-        db.close()
+        conn.close()

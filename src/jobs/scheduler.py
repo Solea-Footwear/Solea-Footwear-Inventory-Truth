@@ -9,10 +9,12 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
 import os
 
+import psycopg2.extras
+
 from src.services.delisting.gmail_service import GmailService
 from src.services.delisting.email_parser_service import EmailParserService
 from src.services.delisting.delist_service import DelistService
-from src.backend.db.database import SessionLocal
+from src.backend.db.database import acquire_conn, release_conn
 
 # Import return tracking services
 from src.services.returns.ebay_return_parser import EbayReturnParser
@@ -23,7 +25,6 @@ from src.services.returns.email_processing_service import EmailProcessingService
 logger = logging.getLogger(__name__)
 
 from src.services.crosslisting.crosslist_service import CrosslistService
-from src.backend.db.database import SessionLocal
 
 
 from dotenv import load_dotenv
@@ -37,54 +38,43 @@ def auto_crosslist_check():
     """
     logger.info("Checking for units needing cross-listing...")
     
-    db = SessionLocal()
-    
-    try:
-        from src.backend.db.database import Unit, Listing, ListingUnit, Channel
-        from sqlalchemy.orm import joinedload
-    
-        # Get all listed units
-        # listed_units = db.query(Unit).filter(
-        #     Unit.status == 'listed'
-        # ).all()
+    conn = acquire_conn()
 
-        listed_units = db.query(Unit).filter(
-            Unit.status == 'listed'
-        ).options(
-            joinedload(Unit.listing_units).joinedload(ListingUnit.listing).joinedload(Listing.channel)
-        ).all()
-        
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT id, unit_code, status FROM units WHERE status = 'listed'")
+            listed_units = cur.fetchall()
+
         if not listed_units:
             logger.debug("No listed units found")
             return
-        
+
         logger.info(f"Found {len(listed_units)} listed units, checking cross-listing status...")
-        
-        crosslist_service = CrosslistService(db)
-        
-        # Track results
+
+        crosslist_service = CrosslistService(conn)
+
         total_checked = 0
         total_created = 0
-        
+
         for unit in listed_units:
             try:
-                result = crosslist_service.check_and_crosslist(unit.id)
+                result = crosslist_service.check_and_crosslist(unit['id'])
                 total_checked += 1
-                
+
                 if result.get('created_listings'):
                     total_created += len(result['created_listings'])
-                    logger.info(f"Unit {unit.unit_code}: Created {len(result['created_listings'])} listings")
-                
+                    logger.info(f"Unit {unit['unit_code']}: Created {len(result['created_listings'])} listings")
+
             except Exception as e:
-                logger.error(f"Error cross-listing unit {unit.unit_code}: {e}")
-        
+                logger.error(f"Error cross-listing unit {unit['unit_code']}: {e}")
+
         logger.info(f"Auto cross-listing complete: Checked {total_checked} units, created {total_created} listings")
-        
+
     except Exception as e:
         logger.error(f"Error in auto_crosslist_check: {e}")
-    
+
     finally:
-        db.close()
+        release_conn(conn)
 
 
 def check_return_emails():
@@ -94,19 +84,19 @@ def check_return_emails():
     """
     logger.info("Checking for return emails...")
     
-    db = SessionLocal()
-    
+    conn = acquire_conn()
+
     try:
         # Initialize services
         gmail = GmailService()
-        
+
         if not gmail.is_connected():
             logger.error("Gmail not connected, skipping return email check")
             return
-        
+
         parser = EbayReturnParser()
-        return_service = ReturnService(db)
-        email_processing = EmailProcessingService(db)
+        return_service = ReturnService(conn)
+        email_processing = EmailProcessingService(conn)
         
         # Get label name from environment
         label_name = os.getenv('EBAY_RETURNS_GMAIL_LABEL', 'EBAY_RETURNS_TRACKING')
@@ -196,12 +186,12 @@ def check_return_emails():
                 errors += 1
         
         logger.info(f"Return email check complete: {processed} processed, {skipped} skipped, {errors} errors")
-        
+
     except Exception as e:
         logger.error(f"Error in check_return_emails: {e}")
-    
+
     finally:
-        db.close()
+        release_conn(conn)
 
 
 # def check_sale_emails():
@@ -289,18 +279,18 @@ def check_sale_emails():
     """
     logger.info("Checking for sale emails...")
     
-    db = SessionLocal()
-    
+    conn = acquire_conn()
+
     try:
         # Initialize services
         gmail = GmailService()
-        
+
         if not gmail.is_connected():
             logger.error("Gmail not connected, skipping email check")
             return
-        
+
         parser = EmailParserService()
-        delist_service = DelistService(db)
+        delist_service = DelistService(conn)
 
         # Get interval with 3 minute buffer
         since_last_minutes = int(os.getenv("EMAIL_CHECK_INTERVAL_MINUTES", "3")) + 5
@@ -400,12 +390,12 @@ def check_sale_emails():
                 logger.error(f"Error processing email {email.get('message_id')}: {e}")
         
         logger.info(f"Email check complete: {total_emails_processed} emails processed, {total_items_processed} items processed, {total_errors} errors")
-        
+
     except Exception as e:
         logger.error(f"Error in check_sale_emails: {e}")
-    
+
     finally:
-        db.close()
+        release_conn(conn)
 
 
 
@@ -571,33 +561,30 @@ class SyncScheduler:
     def get_status(self):
         """Get scheduler status"""
         try:
-            from src.backend.db.database import SyncLog, SessionLocal
-            from sqlalchemy import desc
-            
-            # Check scheduler
             jobs = self.scheduler.get_jobs()
             ebay_job = self.scheduler.get_job('ebay_sync_job')
+            is_running = ebay_job is not None
 
-            is_running = ebay_job is not None 
-            
-            # Get last sync from database
-            db = SessionLocal()
-            last_sync = db.query(SyncLog).order_by(
-                desc(SyncLog.completed_at)
-            ).first()
-            db.close()
-            
-            status = {
+            conn = acquire_conn()
+            try:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(
+                        "SELECT status, completed_at FROM sync_logs "
+                        "ORDER BY completed_at DESC NULLS LAST LIMIT 1"
+                    )
+                    last_sync = cur.fetchone()
+            finally:
+                release_conn(conn)
+
+            return {
                 'is_running': is_running and len(jobs) > 0,
                 'job_count': len(jobs),
                 'sync_interval_minutes': int(os.getenv('SYNC_INTERVAL_MINUTES', '60')),
                 'next_run_time': ebay_job.next_run_time.isoformat() if ebay_job and ebay_job.next_run_time else None,
-                'last_sync_time': last_sync.completed_at.isoformat() if last_sync and last_sync.completed_at else None,
-                'last_sync_status': last_sync.status if last_sync else None
+                'last_sync_time': last_sync['completed_at'].isoformat() if last_sync and last_sync['completed_at'] else None,
+                'last_sync_status': last_sync['status'] if last_sync else None,
             }
-            
-            return status
-            
+
         except Exception as e:
             logger.error(f"Error getting status: {e}")
             return {'is_running': False, 'error': str(e)}

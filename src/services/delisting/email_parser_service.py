@@ -8,8 +8,8 @@ import json
 import re
 from typing import Dict, Optional , List
 import anthropic
-from src.backend.db.database import SessionLocal
-from sqlalchemy import text
+import psycopg2.extras
+from src.backend.db.database import acquire_conn, release_conn
 
 
 # ebay email parser
@@ -142,180 +142,107 @@ class EmailParserService:
             return []
 
     def _update_marketplace_event_sku(self, platform: str, message_id: str, sku: str) -> None:
-        db = SessionLocal()
-
+        conn = acquire_conn()
         try:
-            db.execute(
-                text("""
-                    update marketplace_events
-                    set 
-                        sku = :sku,
-                        raw_payload = jsonb_set(
-                            raw_payload,
-                            '{sku}',
-                            to_jsonb(CAST(:sku AS text)),
-                            true
-                        )
-                    where platform = :platform
-                    and message_id = :message_id
-                """),
-                {
-                    "platform": platform,
-                    "message_id": message_id,
-                    "sku": sku,
-                }
-            )
-
-            db.commit()
-
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE marketplace_events
+                    SET sku = %s,
+                        raw_payload = jsonb_set(raw_payload, '{sku}', to_jsonb(%s::text), true)
+                    WHERE platform = %s AND message_id = %s
+                    """,
+                    [sku, sku, platform, message_id]
+                )
+            conn.commit()
         except Exception as e:
-            db.rollback()
-            logger.error(
-                "marketplace_event_sku_update_failed",
-                extra={
-                    "platform": platform,
-                    "message_id": message_id,
-                    "sku": sku,
-                    "error": str(e)
-                }
-            )
-
+            conn.rollback()
+            logger.error("marketplace_event_sku_update_failed platform=%s message_id=%s error=%s",
+                         platform, message_id, e)
         finally:
-            db.close()
+            release_conn(conn)
 
     def _mark_marketplace_event_needs_reconciliation(self, platform: str, message_id: str, reason: str) -> None:
-        db = SessionLocal()
-
+        conn = acquire_conn()
         try:
-            db.execute(
-                text("""
-                    update marketplace_events
-                    set raw_payload = jsonb_set(
-                        jsonb_set(
-                            raw_payload,
-                            '{needs_reconciliation}',
-                            'true'::jsonb,
-                            true
-                        ),
-                        '{reconciliation_reason}',
-                        to_jsonb(CAST(:reason AS text)),
-                        true
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE marketplace_events
+                    SET raw_payload = jsonb_set(
+                        jsonb_set(raw_payload, '{needs_reconciliation}', 'true'::jsonb, true),
+                        '{reconciliation_reason}', to_jsonb(%s::text), true
                     )
-                    where platform = :platform
-                    and message_id = :message_id
-                """),
-                {
-                    "platform": platform,
-                    "message_id": message_id,
-                    "reason": reason,
-                }
-            )
-
-            db.commit()
-
+                    WHERE platform = %s AND message_id = %s
+                    """,
+                    [reason, platform, message_id]
+                )
+            conn.commit()
         except Exception as e:
-            db.rollback()
-            logger.error(
-                "marketplace_event_reconciliation_update_failed",
-                extra={
-                    "platform": platform,
-                    "message_id": message_id,
-                    "reason": reason,
-                    "error": str(e)
-                }
-            )
-
+            conn.rollback()
+            logger.error("marketplace_event_reconciliation_update_failed platform=%s message_id=%s error=%s",
+                         platform, message_id, e)
         finally:
-            db.close()
-    
+            release_conn(conn)
+
     def _insert_marketplace_event(self, parsed_event: Dict) -> bool:
-        db = SessionLocal()
-
+        conn = acquire_conn()
         try:
-            result = db.execute(
-                text("""
-                    insert into marketplace_events (
-                        platform,
-                        event_type,
-                        message_id,
-                        external_listing_id,
-                        external_order_id,
-                        sku,
-                        raw_payload
-                    )
-                    values (
-                        :platform,
-                        :event_type,
-                        :message_id,
-                        :external_listing_id,
-                        :external_order_id,
-                        :sku,
-                        cast(:raw_payload as jsonb)
-                    )
-                    on conflict (platform, message_id) do nothing
-                    returning id
-                """),
-                {
-                    "platform": parsed_event["platform"],
-                    "event_type": parsed_event["event_type"],
-                    "message_id": parsed_event["message_id"],
-                    "external_listing_id": parsed_event.get("external_listing_id"),
-                    "external_order_id": parsed_event.get("external_order_id"),
-                    "sku": parsed_event.get("sku"),
-                    "raw_payload": json.dumps(parsed_event),
-                }
-            ).fetchone()
-
-            db.commit()
-            return result is not None
-
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO marketplace_events
+                        (platform, event_type, message_id, external_listing_id,
+                         external_order_id, sku, raw_payload)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
+                    ON CONFLICT (platform, message_id) DO NOTHING
+                    RETURNING id
+                    """,
+                    [
+                        parsed_event["platform"],
+                        parsed_event["event_type"],
+                        parsed_event["message_id"],
+                        parsed_event.get("external_listing_id"),
+                        parsed_event.get("external_order_id"),
+                        parsed_event.get("sku"),
+                        json.dumps(parsed_event),
+                    ]
+                )
+                row = cur.fetchone()
+            conn.commit()
+            return row is not None
         except Exception as e:
-            db.rollback()
-            logger.error(
-                "marketplace_event_insert_failed",
-                extra={
-                    "message_id": parsed_event.get("message_id"),
-                    "error": str(e)
-                }
-            )
+            conn.rollback()
+            logger.error("marketplace_event_insert_failed message_id=%s error=%s",
+                         parsed_event.get("message_id"), e)
             raise
-
         finally:
-            db.close()
+            release_conn(conn)
 
     def _resolve_sku_from_mercari_listing_id(self, mercari_listing_id: str) -> Optional[str]:
-        db = SessionLocal()
-
+        conn = acquire_conn()
         try:
-            row = db.execute(
-                text("""
-                    select 
-                        u.unit_code as sku
-                    from listings l
-                    join channels c on c.id = l.channel_id
-                    join listing_units lu on lu.listing_id = l.id
-                    join units u on u.id = lu.unit_id
-                    where lower(c.name) = 'mercari'
-                    and l.channel_listing_id = :mercari_listing_id
-                    limit 1
-                """),
-                {"mercari_listing_id": mercari_listing_id}
-            ).fetchone()
-
-            return row.sku if row else None
-
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT u.unit_code AS sku
+                    FROM listings l
+                    JOIN channels c ON c.id = l.channel_id
+                    JOIN listing_units lu ON lu.listing_id = l.id
+                    JOIN units u ON u.id = lu.unit_id
+                    WHERE LOWER(c.name) = 'mercari'
+                      AND l.channel_listing_id = %s
+                    LIMIT 1
+                    """,
+                    [mercari_listing_id]
+                )
+                row = cur.fetchone()
+            return row[0] if row else None
         except Exception as e:
-            logger.error(
-                "sku_resolution_failed",
-                extra={
-                    "mercari_listing_id": mercari_listing_id,
-                    "error": str(e)
-                }
-            )
+            logger.error("sku_resolution_failed mercari_listing_id=%s error=%s", mercari_listing_id, e)
             return None
-
         finally:
-            db.close()
+            release_conn(conn)
             
     def _parse_with_ai(self, email_data: Dict) -> Optional[Dict]:
         """

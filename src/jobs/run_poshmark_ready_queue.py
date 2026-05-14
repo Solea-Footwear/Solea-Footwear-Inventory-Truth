@@ -2,7 +2,7 @@ import csv
 from dotenv import load_dotenv
 load_dotenv()
 
-from src.backend.db.database import SessionLocal
+from src.backend.db.database import acquire_conn, release_conn
 from src.services.crosslisting.crosslist_service import CrosslistService
 
 CSV_FILE = "poshmark_ready_queue.csv"
@@ -16,11 +16,11 @@ with open(CSV_FILE, newline="") as f:
 
 print(f"Loaded {len(unit_ids)} units to crosslist")
 
-db = SessionLocal()
+conn = acquire_conn()
 
 try:
-    service = CrosslistService(db)
+    service = CrosslistService(conn)
     result = service.bulk_crosslist(unit_ids)
     print(result)
 finally:
-    db.close()
+    release_conn(conn)
