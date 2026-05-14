@@ -15,3 +15,6 @@ APScheduler==3.10.4
 urllib3==2.2.1
 anthropic==0.96.0
 beautifulsoup4==4.14.3
+cryptography>=42.0
+pytest>=8.0
+PyYAML>=6.0

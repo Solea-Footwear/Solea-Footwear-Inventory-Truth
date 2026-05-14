@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m compileall -q .)",
+      "Bash(python -m compileall -q src)",
+      "Bash(python -m compileall -q src/)",
+      "Bash(docker compose config)",
+      "Bash(docker compose ps)",
+      "Bash(docker compose ps *)",
+      "Bash(docker compose logs *)",
+      "Bash(docker compose top *)",
+      "Bash(docker compose port *)",
+      "Bash(docker network ls)",
+      "Bash(docker network inspect *)",
+      "Bash(docker volume ls)",
+      "Bash(docker volume inspect *)"
+    ]
+  }
+}

@@ -2,38 +2,77 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:15
+    image: postgres:15.6
     container_name: solea_postgres
     environment:
       POSTGRES_DB: ${DB_NAME:-inventory_db}
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
-    ports:
-      - "5432:5432"
+    # Reachable only on solea_network (no host port publish).
+    # For local DB access from the host use: docker compose exec postgres psql ...
+    expose:
+      - "5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
       - ./add_sold_columns.sql:/docker-entrypoint-initdb.d/03-add_sold_columns.sql
       - ./seed_test_data.sql:/docker-entrypoint-initdb.d/04-seed_test_data.sql
+      - ./migrations/2026_05_14_ebay_oauth_tokens.sql:/docker-entrypoint-initdb.d/05-ebay_oauth_tokens.sql
+      - ./migrations/2026_05_14_epic1_product_columns.sql:/docker-entrypoint-initdb.d/06-epic1_product_columns.sql
+      - ./migrations/2026_05_14_epic2_unit_sku_constraint.sql:/docker-entrypoint-initdb.d/07-epic2_unit_sku_constraint.sql
     networks:
       - solea_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-inventory_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: solea_pgadmin
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@gmail.com
-      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:?PGADMIN_EMAIL is required in .env}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?PGADMIN_PASSWORD is required in .env}
       PGADMIN_CONFIG_SERVER_MODE: 'False'
-      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'True'
+    # Loopback-only: pgAdmin is reachable from the host on 127.0.0.1:5050 but not from the LAN
     ports:
-      - "5050:80"
+      - "127.0.0.1:5050:80"
     volumes:
       - pgadmin_data:/var/lib/pgadmin
     networks:
       - solea_network
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+
+  app:
+    build: .
+    container_name: solea_app
+    env_file: .env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      API_HOST: "0.0.0.0"  # bind inside the container to all interfaces; the host-side mapping below restricts external reach to 127.0.0.1
+      API_PORT: "9500"
+      PYTHONPATH: /app
+    # Host-loopback only: accessible at http://127.0.0.1:9500 on the dev box, not from the LAN
+    ports:
+      - "127.0.0.1:9500:9500"
+    networks:
+      - solea_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9500/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
 networks:
   solea_network:

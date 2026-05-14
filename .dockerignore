@@ -1,0 +1,43 @@
+# VCS
+.git
+.gitignore
+.gitattributes
+
+# Local environment
+.env
+.env.*
+!.env.example
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Caches & build artifacts
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.tox
+build
+dist
+*.egg-info
+
+# Editor / OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Project-internal — not needed in the image
+docs
+*.md
+.claude
+.github
+
+# Tests (mounted ad hoc if needed; not baked into the image)
+src/tests/legacy
+
+# Selenium browser profiles & dumps
+chromedriver*.log
+*.har
