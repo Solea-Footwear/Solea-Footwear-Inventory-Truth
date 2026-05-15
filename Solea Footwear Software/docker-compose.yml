@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: solea_postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME:-inventory_db}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      # R3-20: no fallback to a default password. The env var must be set
+      # in .env or docker-compose will refuse to start the container.
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+    ports:
+      # R3-20: bind to localhost only.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./add_sold_columns.sql:/docker-entrypoint-initdb.d/03-add_sold_columns.sql
+      - ./migrations/01_add_external_order_number.sql:/docker-entrypoint-initdb.d/05-add_external_order_number.sql
+      - ./seed_test_data.sql:/docker-entrypoint-initdb.d/04-seed_test_data.sql
+    networks:
+      - solea_network
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: solea_pgadmin
+    # R3-20: only starts if the operator explicitly enables it via
+    # `docker-compose --profile pgadmin up`. By default it is NOT brought
+    # up so production deploys can't accidentally expose it.
+    profiles: ["pgadmin"]
+    environment:
+      # R3-20: no default values. Both must be set explicitly.
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:?PGADMIN_DEFAULT_EMAIL is required}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?PGADMIN_DEFAULT_PASSWORD is required}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+    ports:
+      # R3-20: never expose pgAdmin beyond localhost.
+      - "127.0.0.1:5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - solea_network
+    depends_on:
+      - postgres
+
+networks:
+  solea_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  pgadmin_data:
