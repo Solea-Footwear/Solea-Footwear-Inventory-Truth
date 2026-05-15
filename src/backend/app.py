@@ -24,6 +24,7 @@ from src.services.listing_service import (
 )
 from src.services.order_allocation_service import allocate_order
 from src.services.admin_service import get_product_detail, get_sku_list
+from src.services.migration_service import backfill_product_ids, get_exception_report
 
 from src.services.delisting.gmail_service import GmailService
 from src.services.delisting.email_parser_service import EmailParserService
@@ -686,6 +687,38 @@ def admin_get_sku_list():
         return jsonify({'skus': skus, 'count': len(skus)})
     except Exception as exc:
         logger.error(f"Error in admin_get_sku_list: {exc}")
+        return jsonify({'error': str(exc)}), 500
+    finally:
+        release_conn(conn)
+
+
+# ============================================
+# MIGRATION ENDPOINTS (EPIC 9)
+# ============================================
+
+@app.route('/api/admin/migration/backfill', methods=['POST'])
+def admin_backfill_product_ids():
+    conn = acquire_conn()
+    try:
+        result = backfill_product_ids(conn)
+        conn.commit()
+        return jsonify(result)
+    except Exception as exc:
+        conn.rollback()
+        logger.error(f"Error in admin_backfill_product_ids: {exc}")
+        return jsonify({'error': str(exc)}), 500
+    finally:
+        release_conn(conn)
+
+
+@app.route('/api/admin/migration/exceptions', methods=['GET'])
+def admin_get_exception_report():
+    conn = acquire_conn()
+    try:
+        exceptions = get_exception_report(conn)
+        return jsonify({'exceptions': exceptions, 'count': len(exceptions)})
+    except Exception as exc:
+        logger.error(f"Error in admin_get_exception_report: {exc}")
         return jsonify({'error': str(exc)}), 500
     finally:
         release_conn(conn)

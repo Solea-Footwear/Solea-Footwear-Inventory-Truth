@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Migration Admin — Solea Admin</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 32px;
+            color: #1a202c;
+        }
+
+        .dashboard { max-width: 1400px; margin: 0 auto; }
+
+        .header {
+            background: white;
+            border-radius: 20px;
+            padding: 40px 48px;
+            margin-bottom: 28px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.12);
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 24px;
+        }
+
+        .header-text h1 {
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            letter-spacing: -0.03em;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header-text p { color: #718096; font-size: 16px; }
+
+        .btn-nav {
+            padding: 14px 24px;
+            border: none;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            white-space: nowrap;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .btn-nav:hover { box-shadow: 0 6px 25px rgba(102, 126, 234, 0.5); transform: translateY(-2px); }
+
+        .card {
+            background: white;
+            border-radius: 20px;
+            padding: 32px;
+            margin-bottom: 28px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.12);
+        }
+
+        .card-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: #2d3748;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 2px solid #e2e8f0;
+            letter-spacing: -0.01em;
+        }
+
+        .action-button {
+            padding: 16px 32px;
+            border: none;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            letter-spacing: 0.01em;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .action-button:hover { box-shadow: 0 6px 25px rgba(102, 126, 234, 0.5); transform: translateY(-2px); }
+        .action-button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-top: 24px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 24px;
+            border-radius: 16px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .stat-card:hover { transform: translateY(-4px) scale(1.02); box-shadow: 0 8px 30px rgba(102, 126, 234, 0.4); }
+
+        .stat-value { font-size: 36px; font-weight: 800; color: white; margin-bottom: 8px; letter-spacing: -0.03em; }
+        .stat-label { font-size: 13px; color: rgba(255,255,255,0.9); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+
+        .result-message {
+            margin-top: 20px;
+            padding: 16px 20px;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 500;
+        }
+
+        .result-success { background: #f0fff4; border: 2px solid #9ae6b4; color: #276749; }
+        .result-error   { background: #fff5f5; border: 2px solid #fed7d7; color: #c53030; }
+
+        .returns-table { width: 100%; border-collapse: separate; border-spacing: 0; margin-top: 24px; }
+
+        .returns-table th {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 16px 20px;
+            text-align: left;
+            font-weight: 700;
+            color: white;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .returns-table th:first-child { border-radius: 12px 0 0 0; }
+        .returns-table th:last-child  { border-radius: 0 12px 0 0; }
+
+        .returns-table td {
+            padding: 16px 20px;
+            border-bottom: 1px solid #e2e8f0;
+            color: #4a5568;
+            font-size: 14px;
+        }
+
+        .returns-table tbody tr { transition: all 0.2s ease; }
+        .returns-table tbody tr:hover { background: #f7fafc; }
+
+        .missing-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
+            color: white;
+            margin: 2px;
+        }
+
+        .loading { text-align: center; padding: 40px; color: #718096; font-size: 16px; font-weight: 500; }
+
+        .empty-state { text-align: center; padding: 60px 20px; color: #718096; }
+        .empty-state-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
+        .empty-state p { font-size: 16px; font-weight: 600; color: #4a5568; }
+
+        .exception-stat {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            background: #fff5f5;
+            border: 2px solid #fed7d7;
+            border-radius: 12px;
+            padding: 12px 20px;
+            margin-bottom: 20px;
+            font-size: 15px;
+            font-weight: 600;
+            color: #c53030;
+        }
+
+        .exception-count { font-size: 28px; font-weight: 800; }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+
+        <!-- Header -->
+        <div class="header">
+            <div class="header-text">
+                <h1>Migration Admin</h1>
+                <p>Backfill product IDs and view data exceptions</p>
+            </div>
+            <a class="btn-nav" href="sku_list.html">View All SKUs &rarr;</a>
+        </div>
+
+        <!-- Backfill section -->
+        <div class="card">
+            <div class="card-title">Ticket 9.1 — Backfill Product IDs</div>
+            <p style="color:#718096; margin-bottom:20px; font-size:15px;">
+                Generates and writes canonical product IDs for all products that are missing one.
+                Safe to run multiple times — already-backfilled products are skipped.
+            </p>
+            <button class="action-button" id="btn-backfill" onclick="runBackfill()">
+                Run Backfill
+            </button>
+            <div id="backfill-result" style="display:none;">
+                <div id="backfill-message" class="result-message"></div>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="bf-backfilled">—</div>
+                        <div class="stat-label">Backfilled</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="bf-incomplete">—</div>
+                        <div class="stat-label">Skipped — Incomplete</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="bf-no-unit">—</div>
+                        <div class="stat-label">Skipped — No Unit</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="bf-conflict">—</div>
+                        <div class="stat-label">Skipped — Conflict</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Exception report section -->
+        <div class="card">
+            <div class="card-title">Ticket 9.2 — Exception Report</div>
+            <p style="color:#718096; margin-bottom:20px; font-size:15px;">
+                Lists all SKUs whose product is missing <strong>style_code</strong>,
+                <strong>condition_code</strong>, or <strong>size</strong> — these cannot be
+                backfilled until the data is corrected.
+            </p>
+            <button class="action-button" id="btn-exceptions" onclick="loadExceptions()">
+                Load Report
+            </button>
+            <div id="exceptions-container" style="margin-top:24px;"></div>
+        </div>
+
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:9500';
+
+        function escapeHtml(text) {
+            if (text == null) return '';
+            const div = document.createElement('div');
+            div.textContent = String(text);
+            return div.innerHTML;
+        }
+
+        async function runBackfill() {
+            const btn = document.getElementById('btn-backfill');
+            btn.disabled = true;
+            btn.textContent = 'Running…';
+
+            try {
+                const r = await fetch(`${API_BASE}/api/admin/migration/backfill`, { method: 'POST' });
+                const data = await r.json();
+
+                if (!r.ok) {
+                    showBackfillError(data.error || `HTTP ${r.status}`);
+                    return;
+                }
+
+                document.getElementById('bf-backfilled').textContent  = data.backfilled;
+                document.getElementById('bf-incomplete').textContent  = data.skipped_incomplete;
+                document.getElementById('bf-no-unit').textContent     = data.skipped_no_unit;
+                document.getElementById('bf-conflict').textContent    = data.skipped_conflict;
+
+                const msg = document.getElementById('backfill-message');
+                msg.className = 'result-message result-success';
+                msg.textContent = `Backfill complete. ${data.backfilled} product(s) updated.`;
+
+                document.getElementById('backfill-result').style.display = '';
+
+            } catch (err) {
+                showBackfillError(err.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Run Backfill';
+            }
+        }
+
+        function showBackfillError(message) {
+            const msg = document.getElementById('backfill-message');
+            msg.className = 'result-message result-error';
+            msg.textContent = `Error: ${message}`;
+            document.getElementById('backfill-result').style.display = '';
+        }
+
+        async function loadExceptions() {
+            const btn = document.getElementById('btn-exceptions');
+            btn.disabled = true;
+            const container = document.getElementById('exceptions-container');
+            container.innerHTML = '<div class="loading">Loading exceptions…</div>';
+
+            try {
+                const r = await fetch(`${API_BASE}/api/admin/migration/exceptions`);
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                const data = await r.json();
+
+                if (!data.exceptions || data.exceptions.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-state-icon">✅</div>
+                            <p>No exceptions found — all SKUs have complete product data.</p>
+                        </div>`;
+                    return;
+                }
+
+                let rows = '';
+                data.exceptions.forEach(ex => {
+                    const badges = ex.missing_fields.map(f =>
+                        `<span class="missing-badge">${escapeHtml(f)}</span>`
+                    ).join('');
+                    rows += `<tr>
+                        <td><strong>${escapeHtml(ex.unit_code)}</strong></td>
+                        <td style="font-size:12px; color:#a0aec0; font-family:monospace;">${escapeHtml(ex.product_uuid)}</td>
+                        <td>${escapeHtml(ex.brand)} ${escapeHtml(ex.model)}</td>
+                        <td>${badges}</td>
+                        <td>${escapeHtml(ex.status)}</td>
+                    </tr>`;
+                });
+
+                container.innerHTML = `
+                    <div class="exception-stat">
+                        <span class="exception-count">${data.count}</span>
+                        <span>exception${data.count !== 1 ? 's' : ''} found</span>
+                    </div>
+                    <table class="returns-table">
+                        <thead>
+                            <tr>
+                                <th>SKU / Unit Code</th>
+                                <th>Product UUID</th>
+                                <th>Brand / Model</th>
+                                <th>Missing Fields</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>`;
+
+            } catch (err) {
+                container.innerHTML = `<div class="empty-state"><p style="color:#e53e3e;">Error: ${escapeHtml(err.message)}</p></div>`;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
