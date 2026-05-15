@@ -429,3 +429,58 @@ def test_update_listing_on_unit_sold_no_active_listing_is_noop(db, channels, new
         cur.execute("UPDATE units SET status = 'sold' WHERE id = %s", [unit["id"]])
 
     update_listing_on_unit_sold(db, unit_id=str(unit["id"]))
+
+
+# ---------------------------------------------------------------------------
+# Fix C3: multi-qty listing ends when remaining unit is damaged (not just sold)
+# ---------------------------------------------------------------------------
+
+def test_multi_quantity_listing_ends_when_last_unit_is_damaged(db, channels, new_product):
+    """C3: listing must end when one unit is sold and the other is damaged."""
+    listing, _ = create_listing(
+        db, product_id=str(new_product["id"]),
+        channel_name="ebay", title="Test", price=120.0, quantity=2, status="active",
+    )
+    u1 = _make_unit(db, str(new_product["id"]), unit_code="C3-SOLD-001")
+    u2 = _make_unit(db, str(new_product["id"]), unit_code="C3-DMGD-001")
+    assign_unit_to_listing(db, listing_id=str(listing["id"]), unit_id=str(u1["id"]))
+
+    # Attach u2 directly so we can set it to damaged without triggering status change
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO listing_units (id, listing_id, unit_id) VALUES (gen_random_uuid(), %s, %s)",
+            [listing["id"], u2["id"]],
+        )
+        cur.execute("UPDATE units SET status = 'damaged' WHERE id = %s", [u2["id"]])
+        cur.execute("UPDATE units SET status = 'sold' WHERE id = %s", [u1["id"]])
+
+    update_listing_on_unit_sold(db, unit_id=str(u1["id"]))
+
+    with db.cursor() as cur:
+        cur.execute("SELECT status FROM listings WHERE id = %s", [listing["id"]])
+        assert cur.fetchone()[0] == "ended"
+
+
+# ---------------------------------------------------------------------------
+# Fix C4: end_listing does not revert damaged unit to ready_to_list
+# ---------------------------------------------------------------------------
+
+def test_end_listing_does_not_revert_damaged_unit(db, channels, new_product):
+    """C4: end_listing must leave damaged units as-is."""
+    listing, _ = create_listing(
+        db, product_id=str(new_product["id"]),
+        channel_name="ebay", title="Test", price=120.0, status="active",
+    )
+    damaged_unit = _make_unit(db, str(new_product["id"]), unit_code="C4-DMGD-001", status="damaged")
+
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO listing_units (id, listing_id, unit_id) VALUES (gen_random_uuid(), %s, %s)",
+            [listing["id"], damaged_unit["id"]],
+        )
+
+    end_listing(db, listing_id=str(listing["id"]))
+
+    with db.cursor() as cur:
+        cur.execute("SELECT status FROM units WHERE id = %s", [damaged_unit["id"]])
+        assert cur.fetchone()[0] == "damaged"

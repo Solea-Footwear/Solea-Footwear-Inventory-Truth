@@ -135,6 +135,14 @@ class AuditService:
                             'severity': 'warning',
                             'message': f'Ready to list for {days_waiting} days',
                         })
+                else:
+                    issues['units_without_listings'].append({
+                        'unit_code': unit['unit_code'],
+                        'unit_id': str(unit['id']),
+                        'days_waiting': None,
+                        'severity': 'warning',
+                        'message': 'Unit is ready_to_list but has no created_at timestamp',
+                    })
 
             cur.execute("SELECT id, title, channel_listing_id FROM listings WHERE status = 'active'")
             active_listings = cur.fetchall()
@@ -262,7 +270,7 @@ class AuditService:
             for row in cur.fetchall():
                 photos = row['photos'] or []
                 count = len(photos)
-                if 0 < count < 3:
+                if count < 3:
                     issues['insufficient_photos'].append({
                         'template_id': str(row['id']),
                         'product_id': str(row['product_id']),

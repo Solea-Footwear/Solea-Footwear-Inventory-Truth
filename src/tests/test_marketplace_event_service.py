@@ -97,10 +97,10 @@ def test_record_marketplace_event_new_returns_dict_and_true(db):
 
 def test_record_marketplace_event_duplicate_returns_false(db):
     record_marketplace_event(
-        db, platform="poshmark", message_id="msg-me-002", event_type="sale",
+        db, platform="poshmark", message_id="msg-me-002", event_type="sale", sku="AJ1-002",
     )
     event2, created2 = record_marketplace_event(
-        db, platform="poshmark", message_id="msg-me-002", event_type="sale",
+        db, platform="poshmark", message_id="msg-me-002", event_type="sale", sku="AJ1-002",
     )
     assert created2 is False
     assert isinstance(event2, dict)
@@ -115,8 +115,8 @@ def test_record_marketplace_event_duplicate_returns_false(db):
 
 
 def test_record_marketplace_event_two_different_message_ids(db):
-    record_marketplace_event(db, platform="ebay", message_id="msg-me-003a", event_type="sale")
-    record_marketplace_event(db, platform="ebay", message_id="msg-me-003b", event_type="sale")
+    record_marketplace_event(db, platform="ebay", message_id="msg-me-003a", event_type="sale", sku="AJ1-003a")
+    record_marketplace_event(db, platform="ebay", message_id="msg-me-003b", event_type="sale", sku="AJ1-003b")
 
     with db.cursor() as cur:
         cur.execute(
@@ -128,7 +128,18 @@ def test_record_marketplace_event_two_different_message_ids(db):
 
 def test_record_marketplace_event_missing_platform_raises(db):
     with pytest.raises(ValueError, match="platform is required"):
-        record_marketplace_event(db, platform="", message_id="msg-x", event_type="sale")
+        record_marketplace_event(db, platform="", message_id="msg-x", event_type="sale", sku="AJ1-001")
+
+
+def test_record_marketplace_event_sale_without_sku_raises(db):
+    with pytest.raises(ValueError, match="sku is required for sale events"):
+        record_marketplace_event(db, platform="ebay", message_id="msg-no-sku", event_type="sale")
+
+
+def test_record_marketplace_event_uppercase_sale_event_requires_sku(db):
+    """W1: event_type comparison must be case-insensitive — 'SALE' should also require a SKU."""
+    with pytest.raises(ValueError, match="sku is required for sale events"):
+        record_marketplace_event(db, platform="ebay", message_id="msg-upper-sale", event_type="SALE")
 
 
 def test_resolve_mercari_sku_with_matching_listing(db):

@@ -7,7 +7,10 @@ system.  It looks up or creates the parent Product via find_or_create_product()
 The caller controls conn.commit() so multiple units can be batched in one
 transaction (used by the POST /api/intake/units batch endpoint).
 """
+import logging
 from typing import Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 import psycopg2.extras
 
@@ -85,6 +88,11 @@ def register_unit(
             loc = cur.fetchone()
             if loc:
                 location_id = loc[0]
+            else:
+                logger.warning(
+                    "register_unit: location_code %r not found — unit created without location",
+                    location_code,
+                )
 
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(

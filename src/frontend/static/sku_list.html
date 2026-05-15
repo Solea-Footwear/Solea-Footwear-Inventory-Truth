@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SKU / Unit List — Solea Admin</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 32px;
+            color: #1a202c;
+        }
+
+        .dashboard { max-width: 1400px; margin: 0 auto; }
+
+        .header {
+            background: white;
+            border-radius: 20px;
+            padding: 40px 48px;
+            margin-bottom: 28px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.12);
+        }
+
+        .header h1 {
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            letter-spacing: -0.03em;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header p { color: #718096; font-size: 16px; }
+
+        .actions-section {
+            background: white;
+            border-radius: 20px;
+            padding: 28px;
+            margin-bottom: 28px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.12);
+        }
+
+        .actions-title { font-size: 18px; font-weight: 700; color: #2d3748; margin-bottom: 20px; letter-spacing: -0.01em; }
+
+        .actions-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+            align-items: center;
+        }
+
+        .action-button {
+            padding: 16px 28px;
+            border: none;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            letter-spacing: 0.01em;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-primary:hover {
+            box-shadow: 0 6px 25px rgba(102, 126, 234, 0.5);
+            transform: translateY(-2px);
+        }
+
+        .status-select {
+            padding: 16px 20px;
+            border-radius: 12px;
+            border: 2px solid #e2e8f0;
+            font-size: 15px;
+            font-weight: 500;
+            color: #4a5568;
+            background: white;
+            cursor: pointer;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .status-select:focus { border-color: #667eea; }
+
+        .stats-section {
+            background: white;
+            border-radius: 20px;
+            padding: 28px;
+            margin-bottom: 28px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.12);
+        }
+
+        .stats-title { font-size: 18px; font-weight: 700; color: #2d3748; margin-bottom: 24px; letter-spacing: -0.01em; }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 28px;
+            border-radius: 16px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .stat-card:hover { transform: translateY(-4px) scale(1.02); box-shadow: 0 8px 30px rgba(102, 126, 234, 0.4); }
+
+        .stat-value { font-size: 40px; font-weight: 800; color: white; margin-bottom: 8px; letter-spacing: -0.03em; }
+        .stat-label { font-size: 14px; color: rgba(255,255,255,0.9); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+
+        .card {
+            background: white;
+            border-radius: 20px;
+            padding: 32px;
+            margin-bottom: 28px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.12);
+        }
+
+        .card-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: #2d3748;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 2px solid #e2e8f0;
+            letter-spacing: -0.01em;
+        }
+
+        .returns-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+
+        .returns-table th {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 16px 20px;
+            text-align: left;
+            font-weight: 700;
+            color: white;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .returns-table th:first-child { border-radius: 12px 0 0 0; }
+        .returns-table th:last-child  { border-radius: 0 12px 0 0; }
+
+        .returns-table td {
+            padding: 20px;
+            border-bottom: 1px solid #e2e8f0;
+            color: #4a5568;
+            font-size: 15px;
+        }
+
+        .returns-table tbody tr { transition: all 0.2s ease; }
+        .returns-table tbody tr:hover { background: #f7fafc; transform: scale(1.005); }
+
+        .status-badge {
+            display: inline-block;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+        }
+
+        .status-open     { background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%); color: white; }
+        .status-shipped  { background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%); color: white; }
+        .status-closed   { background: linear-gradient(135deg, #34d399 0%, #10b981 100%); color: white; }
+        .status-success  { background: linear-gradient(135deg, #34d399 0%, #10b981 100%); color: white; }
+        .status-failed   { background: linear-gradient(135deg, #f87171 0%, #ef4444 100%); color: white; }
+        .status-skipped  { background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%); color: white; }
+
+        .loading { text-align: center; padding: 60px; color: #718096; font-size: 16px; font-weight: 500; }
+
+        .empty-state { text-align: center; padding: 80px 20px; color: #718096; }
+        .empty-state-icon { font-size: 64px; margin-bottom: 20px; opacity: 0.5; }
+        .empty-state p { font-size: 17px; margin-bottom: 10px; font-weight: 600; color: #4a5568; }
+        .empty-state p:last-child { font-size: 15px; color: #a0aec0; font-weight: 400; }
+
+        a.product-link {
+            color: #667eea;
+            font-weight: 600;
+            text-decoration: none;
+        }
+        a.product-link:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+
+        <!-- Header -->
+        <div class="header">
+            <h1>SKU / Unit List</h1>
+            <p>Browse all individual units and their current inventory status</p>
+        </div>
+
+        <!-- Filter -->
+        <div class="actions-section">
+            <div class="actions-title">Filter by Status</div>
+            <div class="actions-grid">
+                <select id="status-filter" class="status-select">
+                    <option value="">All Statuses</option>
+                    <option value="ready_to_list">Ready to List</option>
+                    <option value="listed">Listed</option>
+                    <option value="sold">Sold</option>
+                    <option value="shipped">Shipped</option>
+                    <option value="returned">Returned</option>
+                    <option value="damaged">Damaged</option>
+                    <option value="reserved">Reserved</option>
+                </select>
+                <button class="action-button btn-primary" onclick="applyFilter()">Load SKUs</button>
+            </div>
+        </div>
+
+        <!-- Stats -->
+        <div class="stats-section">
+            <div class="stats-title">Overview</div>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-total">-</div>
+                    <div class="stat-label">SKUs Shown</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-filter">All</div>
+                    <div class="stat-label">Filter</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Table -->
+        <div class="card">
+            <div class="card-title">Units / SKUs</div>
+            <div id="skus-container">
+                <div class="loading">Loading SKUs...</div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:9500';
+
+        function escapeHtml(text) {
+            if (text == null) return '';
+            const div = document.createElement('div');
+            div.textContent = String(text);
+            return div.innerHTML;
+        }
+
+        function statusBadge(status) {
+            const map = {
+                ready_to_list: 'status-open',
+                listed:        'status-shipped',
+                sold:          'status-closed',
+                shipped:       'status-success',
+                returned:      'status-failed',
+                damaged:       'status-failed',
+                reserved:      'status-skipped',
+            };
+            const cls = map[status] || 'status-skipped';
+            const label = status ? status.replace(/_/g, ' ').toUpperCase() : 'UNKNOWN';
+            return `<span class="status-badge ${cls}">${label}</span>`;
+        }
+
+        async function loadSkus(status) {
+            const container = document.getElementById('skus-container');
+            container.innerHTML = '<div class="loading">Loading SKUs...</div>';
+
+            const filterEl = document.getElementById('status-filter');
+            document.getElementById('stat-filter').textContent = status || 'All';
+
+            const url = status
+                ? `${API_BASE}/api/admin/skus?status=${encodeURIComponent(status)}`
+                : `${API_BASE}/api/admin/skus`;
+
+            try {
+                const r = await fetch(url);
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                const data = await r.json();
+
+                document.getElementById('stat-total').textContent = data.count;
+
+                if (!data.skus || data.skus.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-state-icon">📦</div>
+                            <p>No SKUs found</p>
+                            <p>Try a different status filter</p>
+                        </div>`;
+                    return;
+                }
+
+                let rows = '';
+                data.skus.forEach(sku => {
+                    const detailHref = `product_detail.html?id=${encodeURIComponent(sku.product_uuid)}`;
+                    const locationText = sku.location_code
+                        ? escapeHtml(sku.location_code)
+                        : '<span style="color:#a0aec0;font-style:italic;">—</span>';
+
+                    rows += `<tr>
+                        <td><strong>${escapeHtml(sku.unit_code)}</strong></td>
+                        <td><a class="product-link" href="${detailHref}">${escapeHtml(sku.product_id)}</a></td>
+                        <td>${statusBadge(sku.status)}</td>
+                        <td>${locationText}</td>
+                    </tr>`;
+                });
+
+                container.innerHTML = `
+                    <table class="returns-table">
+                        <thead>
+                            <tr>
+                                <th>SKU / Unit Code</th>
+                                <th>Product ID</th>
+                                <th>Status</th>
+                                <th>Location</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>`;
+
+            } catch (err) {
+                container.innerHTML = `<div class="empty-state"><p style="color:#e53e3e;">Error: ${escapeHtml(err.message)}</p></div>`;
+            }
+        }
+
+        function applyFilter() {
+            const status = document.getElementById('status-filter').value || null;
+            loadSkus(status);
+        }
+
+        window.onload = function () {
+            const params = new URLSearchParams(window.location.search);
+            const initialStatus = params.get('status') || '';
+            if (initialStatus) {
+                document.getElementById('status-filter').value = initialStatus;
+            }
+            loadSkus(initialStatus || null);
+        };
+    </script>
+</body>
+</html>

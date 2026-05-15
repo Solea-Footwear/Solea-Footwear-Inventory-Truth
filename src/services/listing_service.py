@@ -193,7 +193,7 @@ def end_listing(conn, *, listing_id: str) -> Dict:
 
     with conn.cursor() as cur:
         for u in attached_units:
-            if u["status"] not in ("sold", "shipped"):
+            if u["status"] not in ("sold", "shipped", "damaged", "returned", "reserved"):
                 cur.execute(
                     "UPDATE units SET status = 'ready_to_list' WHERE id = %s",
                     [u["id"]],
@@ -242,7 +242,7 @@ def update_listing_on_unit_sold(conn, *, unit_id: str) -> None:
                     """
                     SELECT COUNT(*) FROM units u
                     JOIN listing_units lu ON lu.unit_id = u.id
-                    WHERE lu.listing_id = %s AND u.status NOT IN ('sold', 'shipped')
+                    WHERE lu.listing_id = %s AND u.status IN ('listed', 'reserved', 'ready_to_list')
                     """,
                     [listing_id],
                 )

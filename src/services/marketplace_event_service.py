@@ -36,6 +36,8 @@ def record_marketplace_event(
         raise ValueError("message_id is required")
     if not event_type:
         raise ValueError("event_type is required")
+    if event_type.lower() == "sale" and not sku:
+        raise ValueError("sku is required for sale events")
 
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
@@ -68,7 +70,14 @@ def record_marketplace_event(
             "SELECT * FROM marketplace_events WHERE platform = %s AND message_id = %s",
             [platform, message_id],
         )
-        return dict(cur.fetchone()), False
+        existing = cur.fetchone()
+    if not existing:
+        logger.warning(
+            "record_marketplace_event: duplicate row vanished before SELECT (platform=%s, message_id=%s)",
+            platform, message_id,
+        )
+        return None, False
+    return dict(existing), False
 
 
 def resolve_mercari_sku(conn, *, mercari_listing_id: str) -> Optional[str]:

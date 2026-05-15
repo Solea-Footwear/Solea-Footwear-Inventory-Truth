@@ -23,6 +23,7 @@ from src.services.listing_service import (
     end_listing,
 )
 from src.services.order_allocation_service import allocate_order
+from src.services.admin_service import get_product_detail, get_sku_list
 
 from src.services.delisting.gmail_service import GmailService
 from src.services.delisting.email_parser_service import EmailParserService
@@ -652,6 +653,40 @@ def search_unit(unit_code):
                 'created_at': unit['created_at'].isoformat() if unit['created_at'] else None,
             }
         })
+    finally:
+        release_conn(conn)
+
+
+# ============================================
+# ADMIN ENDPOINTS (EPIC 8)
+# ============================================
+
+@app.route('/api/admin/products/<product_id>', methods=['GET'])
+def admin_get_product_detail(product_id):
+    conn = acquire_conn()
+    try:
+        try:
+            detail = get_product_detail(conn, product_id=product_id)
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 404
+        return jsonify({'product': detail})
+    except Exception as exc:
+        logger.error(f"Error in admin_get_product_detail: {exc}")
+        return jsonify({'error': str(exc)}), 500
+    finally:
+        release_conn(conn)
+
+
+@app.route('/api/admin/skus', methods=['GET'])
+def admin_get_sku_list():
+    conn = acquire_conn()
+    try:
+        status = request.args.get('status') or None
+        skus = get_sku_list(conn, status=status)
+        return jsonify({'skus': skus, 'count': len(skus)})
+    except Exception as exc:
+        logger.error(f"Error in admin_get_sku_list: {exc}")
+        return jsonify({'error': str(exc)}), 500
     finally:
         release_conn(conn)
 

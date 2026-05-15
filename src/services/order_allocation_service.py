@@ -89,7 +89,7 @@ def allocate_order(conn, *, parsed_sale: dict) -> Tuple[Dict, List[Dict], bool]:
     if sku:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
-                "SELECT id, unit_code, status FROM units WHERE unit_code = %s AND status != 'sold' LIMIT 1",
+                "SELECT id, unit_code, status FROM units WHERE LOWER(unit_code) = LOWER(%s) AND status != 'sold' LIMIT 1",
                 [sku],
             )
             row = cur.fetchone()
@@ -149,7 +149,13 @@ def allocate_order(conn, *, parsed_sale: dict) -> Tuple[Dict, List[Dict], bool]:
         )
         alloc_row = cur.fetchone()
 
-    allocation = dict(alloc_row) if alloc_row else _fetch_allocations(conn, order['id'])[0]
+    if alloc_row:
+        allocation = dict(alloc_row)
+    else:
+        existing = _fetch_allocations(conn, order['id'])
+        if not existing:
+            raise ValueError(f"Allocation missing for order {order['id']} — possible concurrent duplicate")
+        allocation = existing[0]
 
     # ------------------------------------------------------------------
     # 5. Mark unit sold

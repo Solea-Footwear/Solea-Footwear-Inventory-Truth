@@ -46,15 +46,12 @@ class BulkImportService:
         try:
             reader = csv.DictReader(StringIO(csv_content))
             for row_num, row in enumerate(reader, start=2):
-                print("validating row...", row_num)
                 results['total_rows'] += 1
                 validation = self._validate_unit_row(row, row_num)
                 if validation['valid']:
-                    print("Row is valid.")
                     results['valid_rows'].append({'row_num': row_num, 'data': row})
                 else:
-                    print("Row is Invalid.")
-                    print(f"Row data: {row}")
+                    logger.debug("Row %s invalid: %s", row_num, validation['errors'])
                     results['invalid_rows'].append({'row_num': row_num, 'data': row, 'errors': validation['errors']})
             logger.info(f"CSV parsed: {len(results['valid_rows'])} valid, {len(results['invalid_rows'])} invalid")
         except Exception as e:
@@ -154,15 +151,6 @@ class BulkImportService:
                 results['created'] += 1
                 logger.info(f"CREATED - Product {idx}: {row['brand']} {row['model']} size {row['size']}")
 
-                if idx % 100 == 0:
-                    try:
-                        self.conn.commit()
-                        logger.info(f"Batch committed: {idx} products processed")
-                    except Exception as e:
-                        self.conn.rollback()
-                        logger.error(f"Batch commit failed at {idx}: {e}")
-                        results['errors'].append({'batch': idx, 'error': str(e)})
-
             except Exception as e:
                 logger.error(f"ERROR - Product {idx} failed: {e}")
                 results['errors'].append({'row_num': row_data['row_num'], 'error': str(e)})
@@ -227,15 +215,6 @@ class BulkImportService:
                 results['created'] += 1
                 logger.info(f"CREATED - Unit {idx}: {row['unit_code']}")
 
-                if idx % 100 == 0:
-                    try:
-                        self.conn.commit()
-                        logger.info(f"Batch committed: {idx} units processed")
-                    except Exception as e:
-                        self.conn.rollback()
-                        logger.error(f"Batch commit failed at {idx}: {e}")
-                        results['errors'].append({'batch': idx, 'error': str(e)})
-
             except Exception as e:
                 logger.error(f"ERROR - Unit {idx} failed: {e}")
                 results['errors'].append({'row_num': row_data['row_num'], 'error': str(e)})
@@ -252,34 +231,32 @@ class BulkImportService:
     # ------------------------------------------------------------------ helpers
 
     def _get_or_create_category(self, category_name: str):
-        """Return category id, creating if needed."""
+        """Return category id, creating if needed. Race-safe via ON CONFLICT."""
         with self.conn.cursor() as cur:
-            cur.execute("SELECT id FROM categories WHERE internal_name = %s LIMIT 1", [category_name])
+            cur.execute(
+                "INSERT INTO categories (id, internal_name, display_name) "
+                "VALUES (gen_random_uuid(), %s, %s) ON CONFLICT (internal_name) DO NOTHING RETURNING id",
+                [category_name, category_name],
+            )
             row = cur.fetchone()
             if row:
                 return row[0]
-            cur.execute(
-                "INSERT INTO categories (id, internal_name, display_name) VALUES (gen_random_uuid(), %s, %s) RETURNING id",
-                [category_name, category_name],
-            )
+            cur.execute("SELECT id FROM categories WHERE internal_name = %s", [category_name])
             return cur.fetchone()[0]
 
     def _get_or_create_condition(self, condition_name: str):
-        """Return condition_grade id, creating if needed."""
+        """Return condition_grade id, creating if needed. Race-safe via ON CONFLICT."""
+        internal_code = condition_name.lower().replace(' ', '_').replace('-', '_')
         with self.conn.cursor() as cur:
-            cur.execute("SELECT id FROM condition_grades WHERE LOWER(display_name) = LOWER(%s) LIMIT 1", [condition_name])
+            cur.execute(
+                "INSERT INTO condition_grades (id, internal_code, display_name, ebay_condition_id) "
+                "VALUES (gen_random_uuid(), %s, %s, 3000) ON CONFLICT (internal_code) DO NOTHING RETURNING id",
+                [internal_code, condition_name],
+            )
             row = cur.fetchone()
             if row:
                 return row[0]
-            internal_code = condition_name.lower().replace(' ', '_').replace('-', '_')
-            cur.execute(
-                """
-                INSERT INTO condition_grades (id, internal_code, display_name, ebay_condition_id)
-                VALUES (gen_random_uuid(), %s, %s, 3000)
-                RETURNING id
-                """,
-                [internal_code, condition_name],
-            )
+            cur.execute("SELECT id FROM condition_grades WHERE internal_code = %s", [internal_code])
             return cur.fetchone()[0]
 
     def generate_products_template(self) -> str:
