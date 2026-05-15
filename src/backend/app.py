@@ -6,7 +6,7 @@ import json
 import os
 import logging
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, send_file, Response
+from flask import Flask, request, jsonify, send_file, send_from_directory, Response
 from flask_cors import CORS
 from dotenv import load_dotenv
 
@@ -42,6 +42,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+STATIC_DIR = os.path.join(os.path.dirname(__file__), '..', 'frontend', 'static')
+
 app = Flask(__name__)
 CORS(app)
 from src.backend.config import SECRET_KEY
@@ -49,6 +51,15 @@ app.config['SECRET_KEY'] = SECRET_KEY
 
 from src.backend.routes.oauth import oauth_bp
 app.register_blueprint(oauth_bp)
+
+
+# ============================================
+# ROOT / STATIC PAGES
+# ============================================
+
+@app.route('/')
+def index():
+    return send_from_directory(STATIC_DIR, 'sku_list.html')
 
 
 # ============================================
@@ -2953,7 +2964,7 @@ def get_return_monitoring_status():
 
 @app.route('/returns-dashboard')
 def returns_dashboard():
-    return send_file('returns_dashboard.html')
+    return send_from_directory(STATIC_DIR, 'returns_dashboard.html')
 
 
 # ============================================
