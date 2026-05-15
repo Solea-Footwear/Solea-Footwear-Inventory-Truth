@@ -7,15 +7,22 @@ ALTER TABLE products
     ADD COLUMN IF NOT EXISTS condition_code  VARCHAR(20),
     ADD COLUMN IF NOT EXISTS is_interchangeable BOOLEAN NOT NULL DEFAULT FALSE;
 
--- Unique index (CREATE UNIQUE INDEX ... IF NOT EXISTS requires Postgres 9.5+)
+-- Full UNIQUE constraint (required for ON CONFLICT (product_id) DO NOTHING in product_registry_service)
 DO $$
 BEGIN
-    IF NOT EXISTS (
+    -- Drop old partial index if it exists (from earlier versions of this migration)
+    IF EXISTS (
         SELECT 1 FROM pg_indexes
         WHERE tablename = 'products' AND indexname = 'ix_products_product_id'
     ) THEN
-        CREATE UNIQUE INDEX ix_products_product_id ON products (product_id)
-            WHERE product_id IS NOT NULL;
+        DROP INDEX ix_products_product_id;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'uq_products_product_id' AND conrelid = 'products'::regclass
+    ) THEN
+        ALTER TABLE products
+            ADD CONSTRAINT uq_products_product_id UNIQUE (product_id);
     END IF;
 END;
 $$;

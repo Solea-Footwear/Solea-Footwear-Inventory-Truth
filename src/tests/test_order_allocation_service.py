@@ -77,6 +77,28 @@ def _make_listing(db, product_id, channel_id, channel_listing_id=None):
         return listing
 
 
+def _make_multi_listing(db, product_id, channel_id, channel_listing_id=None):
+    with db.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            INSERT INTO listings
+                (id, product_id, channel_id, title, current_price, status, mode, quantity)
+            VALUES
+                (gen_random_uuid(), %s, %s, 'Multi Test', 100.0, 'active', 'multi_quantity', 2)
+            RETURNING *
+            """,
+            [product_id, channel_id],
+        )
+        listing = dict(cur.fetchone())
+        if channel_listing_id:
+            cur.execute(
+                "UPDATE listings SET channel_listing_id = %s WHERE id = %s RETURNING *",
+                [channel_listing_id, listing['id']],
+            )
+            listing = dict(cur.fetchone())
+        return listing
+
+
 def _attach_unit(db, listing_id, unit_id):
     with db.cursor() as cur:
         cur.execute(
@@ -420,3 +442,49 @@ def test_order_status_transitions(db):
     assert created is True
     assert order['status'] == 'allocated'
     assert order['allocated_at'] is not None
+
+
+# ---------------------------------------------------------------------------
+# Tests 19-20: listing lifecycle on sale (EPIC 5 Ticket 5.2)
+# ---------------------------------------------------------------------------
+
+def test_allocate_order_closes_single_quantity_listing(db):
+    """After allocation, a single_quantity listing's status becomes 'sold'."""
+    product = _make_product(db)
+    channel = _make_channel(db)
+    unit = _make_unit(db, product['id'], 'AJ1-SQ-CLOSE-001')
+    listing = _make_listing(db, product['id'], channel['id'])
+    _attach_unit(db, listing['id'], unit['id'])
+
+    allocate_order(db, parsed_sale={
+        'platform': 'ebay',
+        'message_id': 'msg-sq-close-001',
+        'sku': 'AJ1-SQ-CLOSE-001',
+        'price': 100.0,
+    })
+
+    with db.cursor() as cur:
+        cur.execute("SELECT status FROM listings WHERE id = %s", [listing['id']])
+        assert cur.fetchone()[0] == 'sold'
+
+
+def test_allocate_order_keeps_multi_quantity_listing_active_when_units_remain(db):
+    """Allocating one unit of a 2-unit multi_quantity listing leaves it 'active'."""
+    product = _make_product(db)
+    channel = _make_channel(db)
+    u1 = _make_unit(db, product['id'], 'AJ1-MQ-LIVE-001')
+    u2 = _make_unit(db, product['id'], 'AJ1-MQ-LIVE-002')
+    listing = _make_multi_listing(db, product['id'], channel['id'])
+    _attach_unit(db, listing['id'], u1['id'])
+    _attach_unit(db, listing['id'], u2['id'])
+
+    allocate_order(db, parsed_sale={
+        'platform': 'ebay',
+        'message_id': 'msg-mq-live-001',
+        'sku': 'AJ1-MQ-LIVE-001',
+        'price': 100.0,
+    })
+
+    with db.cursor() as cur:
+        cur.execute("SELECT status FROM listings WHERE id = %s", [listing['id']])
+        assert cur.fetchone()[0] == 'active'

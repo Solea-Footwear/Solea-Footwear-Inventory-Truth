@@ -6,12 +6,14 @@ import json
 import logging
 import re
 from datetime import datetime
+from typing import Dict, List, Optional
 
 import psycopg2
 import psycopg2.extras
 
 from src.backend.db.database import _dsn
 from src.integrations.ebay.ebay_api import ebay_api
+from src.services.listing_service import update_listing_on_unit_sold
 
 logger = logging.getLogger(__name__)
 
@@ -460,3 +462,125 @@ class SyncService:
             alerts_conn.rollback()
         finally:
             alerts_conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Module-level pure-DB functions (caller owns commit)
+# ---------------------------------------------------------------------------
+
+def apply_unit_sold_from_sync(
+    conn,
+    *,
+    unit_code: str,
+    platform: str,
+    sold_price: float,
+    sold_at: datetime,
+) -> Optional[Dict]:
+    """
+    Apply a sold-item record from an external sync to the DB.
+
+    Finds the unit by unit_code. If already sold or not found, returns None.
+    Updates unit to status='sold' and triggers listing lifecycle via
+    update_listing_on_unit_sold() (EPIC 5 Ticket 5.2).
+
+    Returns updated unit dict on success, None otherwise.
+    Caller owns commit.
+    """
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "SELECT id, status, sold_at FROM units WHERE unit_code = %s",
+            [unit_code],
+        )
+        unit = cur.fetchone()
+
+    if not unit:
+        logger.debug("apply_unit_sold_from_sync: unit_code %s not found", unit_code)
+        return None
+
+    if unit["status"] == "sold" and unit["sold_at"]:
+        logger.debug("apply_unit_sold_from_sync: unit %s already sold", unit_code)
+        return None
+
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            UPDATE units
+            SET status='sold', sold_at=%s, sold_price=%s, sold_platform=%s
+            WHERE id=%s
+            RETURNING *
+            """,
+            [sold_at, sold_price, platform, unit["id"]],
+        )
+        updated = dict(cur.fetchone())
+
+    update_listing_on_unit_sold(conn, unit_id=str(unit["id"]))
+
+    logger.info(
+        "apply_unit_sold_from_sync: marked %s sold at $%s on %s",
+        unit_code, sold_price, platform,
+    )
+    return updated
+
+
+def create_sync_log(conn, *, channel_name: str, sync_type: str) -> Dict:
+    """
+    Insert a sync_log row with status='running'.
+
+    Returns the new sync_log dict.
+    Caller owns commit. Raises ValueError if channel_name not found.
+    """
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "SELECT id FROM channels WHERE LOWER(name) = LOWER(%s)", [channel_name]
+        )
+        channel = cur.fetchone()
+    if not channel:
+        raise ValueError(f"Channel not found: {channel_name}")
+
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            INSERT INTO sync_logs (id, channel_id, sync_type, status, started_at)
+            VALUES (gen_random_uuid(), %s, %s, 'running', now())
+            RETURNING *
+            """,
+            [channel["id"], sync_type],
+        )
+        return dict(cur.fetchone())
+
+
+def finish_sync_log(
+    conn,
+    *,
+    sync_log_id: str,
+    status: str,
+    records_processed: int = 0,
+    records_updated: int = 0,
+    records_created: int = 0,
+    errors: list = None,
+) -> Dict:
+    """
+    Update a sync_log row to its terminal status (completed|failed) with counts.
+
+    Returns updated sync_log dict.
+    Caller owns commit. Raises ValueError if sync_log_id not found.
+    """
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            UPDATE sync_logs
+            SET status=%s, completed_at=now(),
+                records_processed=%s, records_updated=%s, records_created=%s, errors=%s
+            WHERE id=%s
+            RETURNING *
+            """,
+            [
+                status, records_processed, records_updated, records_created,
+                json.dumps(errors) if errors else None,
+                sync_log_id,
+            ],
+        )
+        row = cur.fetchone()
+    if not row:
+        raise ValueError("sync_log not found")
+    return dict(row)

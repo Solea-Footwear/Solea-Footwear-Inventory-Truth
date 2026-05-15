@@ -1,17 +1,19 @@
 """
-Unit tests for src.services.listing_service (EPIC 3 Tickets 3.1 and 3.2).
+Unit tests for src.services.listing_service (EPIC 3 Tickets 3.1-3.2, EPIC 5 Tickets 5.1-5.2).
 
 Uses a real Postgres connection with per-test transaction rollback so no data
-persists between tests.  Requires postgres to be running with the EPIC 3
-migration applied (supports_multi_quantity column on channels).
+persists between tests.  Requires postgres to be running with the EPIC 3 and
+EPIC 5 migrations applied.
 """
-import pytest
+import psycopg2
 import psycopg2.extras
+import pytest
 
 from src.services.listing_service import (
     create_listing,
     assign_unit_to_listing,
     end_listing,
+    update_listing_on_unit_sold,
 )
 
 
@@ -304,3 +306,126 @@ def test_end_listing_does_not_revert_sold_or_shipped_units(db, channels, new_pro
 
         cur.execute("SELECT status FROM units WHERE id = %s", [shipped_unit["id"]])
         assert cur.fetchone()[0] == "shipped"
+
+
+# ---------------------------------------------------------------------------
+# Tests 14-17: quantity param (Ticket 5.1)
+# ---------------------------------------------------------------------------
+
+def test_create_listing_default_quantity_is_one(db, channels, new_product):
+    listing, _ = create_listing(
+        db, product_id=str(new_product["id"]),
+        channel_name="ebay", title="Nike AJ1 NEW", price=120.0,
+    )
+    assert listing["quantity"] == 1
+
+
+def test_multi_quantity_listing_accepts_quantity_gt_one(db, channels, new_product):
+    listing, _ = create_listing(
+        db, product_id=str(new_product["id"]),
+        channel_name="ebay", title="Nike AJ1 NEW", price=120.0, quantity=3,
+    )
+    assert listing["quantity"] == 3
+    assert listing["mode"] == "multi_quantity"
+
+
+def test_single_quantity_listing_rejects_quantity_gt_one(db, channels, new_product):
+    with pytest.raises(ValueError, match="single_quantity listings must have quantity=1"):
+        create_listing(
+            db, product_id=str(new_product["id"]),
+            channel_name="poshmark", title="Nike AJ1 NEW", price=110.0, quantity=2,
+        )
+
+
+def test_db_constraint_rejects_single_quantity_with_quantity_gt_one(db, channels, new_product):
+    with pytest.raises(psycopg2.IntegrityError):
+        with db.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO listings
+                    (id, product_id, channel_id, title, current_price, status, mode, quantity)
+                VALUES
+                    (gen_random_uuid(), %s,
+                     (SELECT id FROM channels WHERE name = 'poshmark'),
+                     'Test', 100.0, 'draft', 'single_quantity', 2)
+                """,
+                [new_product["id"]],
+            )
+    db.rollback()
+
+
+# ---------------------------------------------------------------------------
+# Tests 18-21: update_listing_on_unit_sold (Ticket 5.2)
+# ---------------------------------------------------------------------------
+
+def test_single_quantity_listing_becomes_sold_when_unit_sold(db, channels, excellent_product):
+    listing, _ = create_listing(
+        db, product_id=str(excellent_product["id"]),
+        channel_name="ebay", title="Test", price=100.0, status="active",
+    )
+    unit = _make_unit(db, str(excellent_product["id"]))
+    assign_unit_to_listing(db, listing_id=str(listing["id"]), unit_id=str(unit["id"]))
+
+    with db.cursor() as cur:
+        cur.execute("UPDATE units SET status = 'sold' WHERE id = %s", [unit["id"]])
+
+    update_listing_on_unit_sold(db, unit_id=str(unit["id"]))
+
+    with db.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("SELECT status, sold_at FROM listings WHERE id = %s", [listing["id"]])
+        row = dict(cur.fetchone())
+
+    assert row["status"] == "sold"
+    assert row["sold_at"] is not None
+
+
+def test_multi_quantity_listing_stays_active_when_one_unit_sold(db, channels, new_product):
+    listing, _ = create_listing(
+        db, product_id=str(new_product["id"]),
+        channel_name="ebay", title="Test", price=120.0, quantity=2, status="active",
+    )
+    u1 = _make_unit(db, str(new_product["id"]), unit_code="MQ-A001")
+    u2 = _make_unit(db, str(new_product["id"]), unit_code="MQ-A002")
+    assign_unit_to_listing(db, listing_id=str(listing["id"]), unit_id=str(u1["id"]))
+    assign_unit_to_listing(db, listing_id=str(listing["id"]), unit_id=str(u2["id"]))
+
+    with db.cursor() as cur:
+        cur.execute("UPDATE units SET status = 'sold' WHERE id = %s", [u1["id"]])
+
+    update_listing_on_unit_sold(db, unit_id=str(u1["id"]))
+
+    with db.cursor() as cur:
+        cur.execute("SELECT status FROM listings WHERE id = %s", [listing["id"]])
+        assert cur.fetchone()[0] == "active"
+
+
+def test_multi_quantity_listing_ends_when_all_units_sold(db, channels, new_product):
+    listing, _ = create_listing(
+        db, product_id=str(new_product["id"]),
+        channel_name="ebay", title="Test", price=120.0, quantity=2, status="active",
+    )
+    u1 = _make_unit(db, str(new_product["id"]), unit_code="MQ-B001")
+    u2 = _make_unit(db, str(new_product["id"]), unit_code="MQ-B002")
+    assign_unit_to_listing(db, listing_id=str(listing["id"]), unit_id=str(u1["id"]))
+    assign_unit_to_listing(db, listing_id=str(listing["id"]), unit_id=str(u2["id"]))
+
+    with db.cursor() as cur:
+        cur.execute("UPDATE units SET status = 'sold' WHERE id IN (%s, %s)", [u1["id"], u2["id"]])
+
+    update_listing_on_unit_sold(db, unit_id=str(u1["id"]))
+    update_listing_on_unit_sold(db, unit_id=str(u2["id"]))
+
+    with db.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("SELECT status, ended_at FROM listings WHERE id = %s", [listing["id"]])
+        row = dict(cur.fetchone())
+
+    assert row["status"] == "ended"
+    assert row["ended_at"] is not None
+
+
+def test_update_listing_on_unit_sold_no_active_listing_is_noop(db, channels, new_product):
+    unit = _make_unit(db, str(new_product["id"]))
+    with db.cursor() as cur:
+        cur.execute("UPDATE units SET status = 'sold' WHERE id = %s", [unit["id"]])
+
+    update_listing_on_unit_sold(db, unit_id=str(unit["id"]))

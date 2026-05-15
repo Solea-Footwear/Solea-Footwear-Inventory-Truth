@@ -5,7 +5,7 @@ Enforces marketplace ToS:
   - Mercari and Poshmark: single_quantity only (supports_multi_quantity = FALSE on channel)
   - eBay: multi_quantity allowed when product is interchangeable (NEW / LIKE_NEW)
 
-All three public functions expect caller to own the commit.
+All public functions expect caller to own the commit.
 """
 import json
 import logging
@@ -28,6 +28,7 @@ def create_listing(
     item_specifics=None,
     channel_listing_id: str = None,
     listing_url: str = None,
+    quantity: int = 1,
     status: str = "draft",
 ) -> Tuple[Dict, bool]:
     """
@@ -37,9 +38,11 @@ def create_listing(
       multi_quantity  — only when channel.supports_multi_quantity AND product.is_interchangeable
       single_quantity — all other cases (non-interchangeable product or ToS-restricted channel)
 
+    quantity must be 1 for single_quantity listings (raises ValueError otherwise).
+
     Returns (listing_dict, created=True).
     Caller owns commit.
-    Raises ValueError if product_id or channel_name not found.
+    Raises ValueError if product_id or channel_name not found, or quantity invalid.
     """
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
@@ -65,15 +68,18 @@ def create_listing(
         else "single_quantity"
     )
 
+    if mode == "single_quantity" and quantity != 1:
+        raise ValueError("single_quantity listings must have quantity=1")
+
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
             INSERT INTO listings
                 (id, product_id, channel_id, title, description, current_price,
-                 photos, item_specifics, channel_listing_id, listing_url, status, mode)
+                 photos, item_specifics, channel_listing_id, listing_url, status, mode, quantity)
             VALUES
                 (gen_random_uuid(), %s, %s, %s, %s, %s,
-                 %s::jsonb, %s::jsonb, %s, %s, %s, %s)
+                 %s::jsonb, %s::jsonb, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             [
@@ -88,6 +94,7 @@ def create_listing(
                 listing_url,
                 status,
                 mode,
+                quantity,
             ],
         )
         listing = dict(cur.fetchone())
@@ -193,3 +200,56 @@ def end_listing(conn, *, listing_id: str) -> Dict:
                 )
 
     return listing
+
+
+def update_listing_on_unit_sold(conn, *, unit_id: str) -> None:
+    """
+    Update listing status after a unit is marked sold.
+
+    single_quantity → status='sold', sold_at=now, ended_at=now
+    multi_quantity  → if all attached units are now sold/shipped: status='ended', ended_at=now
+                      otherwise: leave active
+
+    Only acts on listings with status='active'. No-op if unit has no active listing.
+    Caller owns commit.
+    """
+    now = datetime.utcnow()
+
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT l.id, l.mode
+            FROM listings l
+            JOIN listing_units lu ON lu.listing_id = l.id
+            WHERE lu.unit_id = %s AND l.status = 'active'
+            """,
+            [unit_id],
+        )
+        active_listings = cur.fetchall()
+
+    for listing in active_listings:
+        listing_id = listing["id"]
+
+        if listing["mode"] == "single_quantity":
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE listings SET status='sold', sold_at=%s, ended_at=%s WHERE id=%s",
+                    [now, now, listing_id],
+                )
+        else:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COUNT(*) FROM units u
+                    JOIN listing_units lu ON lu.unit_id = u.id
+                    WHERE lu.listing_id = %s AND u.status NOT IN ('sold', 'shipped')
+                    """,
+                    [listing_id],
+                )
+                remaining = cur.fetchone()[0]
+            if remaining == 0:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE listings SET status='ended', ended_at=%s WHERE id=%s",
+                        [now, listing_id],
+                    )

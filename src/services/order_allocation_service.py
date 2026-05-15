@@ -10,6 +10,8 @@ import psycopg2.extras
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple
 
+from src.services.listing_service import update_listing_on_unit_sold
+
 logger = logging.getLogger(__name__)
 
 
@@ -162,6 +164,11 @@ def allocate_order(conn, *, parsed_sale: dict) -> Tuple[Dict, List[Dict], bool]:
             """,
             [now, sale_price, platform, unit['id']],
         )
+
+    # ------------------------------------------------------------------
+    # 5a. Update listing lifecycle based on unit sold
+    # ------------------------------------------------------------------
+    update_listing_on_unit_sold(conn, unit_id=unit['id'])
 
     # ------------------------------------------------------------------
     # 6. Update order to 'allocated'

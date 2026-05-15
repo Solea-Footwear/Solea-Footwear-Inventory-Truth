@@ -160,6 +160,7 @@ CREATE TABLE listings (
     listing_url TEXT,
     status VARCHAR(50) DEFAULT 'active',
     mode VARCHAR(50) DEFAULT 'single_quantity',
+    quantity INTEGER NOT NULL DEFAULT 1,
     photos JSONB,
     item_specifics JSONB,
     sold_at TIMESTAMP,
@@ -167,7 +168,7 @@ CREATE TABLE listings (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     ended_at TIMESTAMP,
-    
+
     CONSTRAINT check_listing_status CHECK (status IN (
         'active',
         'sold',
@@ -177,7 +178,8 @@ CREATE TABLE listings (
     CONSTRAINT check_listing_mode CHECK (mode IN (
         'single_quantity',
         'multi_quantity'
-    ))
+    )),
+    CONSTRAINT chk_listing_quantity_mode CHECK (mode = 'multi_quantity' OR quantity = 1)
 );
 
 --  i am little bit ocnfused by channel listing id so it means that is id of listing on specifici channel like ebay explain me please
@@ -228,6 +230,14 @@ CREATE TABLE listing_templates (
     photos JSONB,
     item_specifics JSONB,
     base_price DECIMAL(10, 2),
+    photo_metadata JSONB,
+    pricing JSONB,
+    category_mappings JSONB,
+    seo_keywords JSONB,
+    is_validated BOOLEAN NOT NULL DEFAULT FALSE,
+    validation_errors JSONB,
+    template_version INTEGER NOT NULL DEFAULT 1,
+    last_synced_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

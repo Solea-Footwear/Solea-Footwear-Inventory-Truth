@@ -925,6 +925,11 @@ def create_listing_route():
             return jsonify({'error': 'price must be a number'}), 422
 
         try:
+            quantity = int(data.get('quantity', 1))
+        except (TypeError, ValueError):
+            return jsonify({'error': 'quantity must be an integer'}), 422
+
+        try:
             listing, created = create_listing(
                 conn,
                 product_id=data['product_id'],
@@ -936,6 +941,7 @@ def create_listing_route():
                 item_specifics=data.get('item_specifics'),
                 channel_listing_id=data.get('channel_listing_id'),
                 listing_url=data.get('listing_url'),
+                quantity=quantity,
                 status=data.get('status', 'draft'),
             )
             conn.commit()
@@ -957,6 +963,7 @@ def create_listing_route():
                 'title': listing['title'],
                 'price': float(listing['current_price']) if listing['current_price'] else None,
                 'mode': listing['mode'],
+                'quantity': listing['quantity'],
                 'status': listing['status'],
                 'created_at': listing['created_at'].isoformat() if listing['created_at'] else None,
             },

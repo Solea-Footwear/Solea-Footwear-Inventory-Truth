@@ -196,3 +196,67 @@ class DelistService:
 
         else:
             return {'success': False, 'error': f'Unknown platform: {platform}'}
+
+
+# ---------------------------------------------------------------------------
+# Module-level pure-DB functions (caller owns commit)
+# ---------------------------------------------------------------------------
+
+def find_active_listings_for_unit(conn, unit_id: str) -> List[dict]:
+    """
+    Return all active listings for a unit, including channel_name in each row.
+
+    Joins listings → listing_units → channels so callers don't need a second query.
+    Returns empty list if none found.
+    """
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT l.*, LOWER(c.name) AS channel_name
+            FROM listings l
+            JOIN listing_units lu ON lu.listing_id = l.id
+            JOIN channels c ON c.id = l.channel_id
+            WHERE lu.unit_id = %s AND l.status = 'active'
+            """,
+            [str(unit_id)],
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def mark_listing_sold(conn, *, listing_id: str, sold_price: float = None) -> Dict:
+    """
+    Mark a listing as 'sold', setting sold_at and ended_at to now().
+
+    Returns updated listing dict.
+    Caller owns commit. Raises ValueError if listing not found.
+    """
+    now = datetime.utcnow()
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "UPDATE listings SET status='sold', sold_at=%s, sold_price=%s, ended_at=%s "
+            "WHERE id=%s RETURNING *",
+            [now, sold_price, now, listing_id],
+        )
+        row = cur.fetchone()
+    if not row:
+        raise ValueError("Listing not found")
+    return dict(row)
+
+
+def mark_listing_ended(conn, *, listing_id: str) -> Dict:
+    """
+    Mark a listing as 'ended', setting ended_at to now().
+
+    Returns updated listing dict.
+    Caller owns commit. Raises ValueError if listing not found.
+    """
+    now = datetime.utcnow()
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "UPDATE listings SET status='ended', ended_at=%s WHERE id=%s RETURNING *",
+            [now, listing_id],
+        )
+        row = cur.fetchone()
+    if not row:
+        raise ValueError("Listing not found")
+    return dict(row)

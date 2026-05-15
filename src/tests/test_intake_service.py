@@ -266,9 +266,10 @@ def test_batch_with_preexisting_unit_code_skipped(db):
 
 
 def test_batch_empty_list_produces_no_rows(db):
+    before = _count_all_units(db)
     summary = _batch(db, [])
     assert summary["total"] == 0
-    assert _count_all_units(db) == 0
+    assert _count_all_units(db) == before
 
 
 def test_batch_invalid_condition_raises_value_error(db):
