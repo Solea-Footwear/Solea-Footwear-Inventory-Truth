@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 import psycopg2.extras
 
 from src.services.delisting.gmail_service import GmailService
+from src.services.order_allocation_service import allocate_order
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +44,9 @@ class DelistService:
         }
 
         try:
-            unit = self._find_unit(parsed_email)
+            order, allocations, created = allocate_order(self.conn, parsed_sale=parsed_email)
 
-            if not unit:
+            if order['needs_reconciliation']:
                 email_subject = parsed_email.get('title', 'Unknown subject')[:100]
                 sku = parsed_email.get('sku', 'N/A')
                 order_id = parsed_email.get('order_id', 'N/A')
@@ -70,64 +71,71 @@ class DelistService:
                     except Exception as e:
                         logger.error(f"Error moving email to label: {e}")
 
-                results['errors'].append('Unit not found by SKU or title')
+                self.conn.commit()
+                results['errors'].append('Unit not found by SKU or listing_id')
                 return results
 
             results['unit_found'] = True
-            results['unit_code'] = unit['unit_code']
-
-            self._update_unit_sold(unit, parsed_email)
             results['unit_updated'] = True
+            results['order_id'] = str(order['id'])
 
-            listings = self._find_unit_listings(unit['id'])
-            results['listings_found'] = [str(l['id']) for l in listings]
-            logger.info(f"Found {len(listings)} listings for unit {unit['unit_code']}")
+            # Cross-platform delisting for each allocated unit
+            for alloc in allocations:
+                unit_id = alloc['unit_id']
+                listings = self._find_unit_listings(unit_id)
+                results['listings_found'].extend([str(l['id']) for l in listings])
 
-            sold_platform = parsed_email.get('platform')
+                with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute("SELECT unit_code FROM units WHERE id = %s", [str(unit_id)])
+                    row = cur.fetchone()
+                    unit_code = row['unit_code'] if row else str(unit_id)
+                results['unit_code'] = unit_code
+                logger.info(f"Found {len(listings)} listings for unit {unit_code}")
 
-            for listing in listings:
-                try:
-                    listing_platform = self._get_listing_platform(listing)
+                sold_platform = parsed_email.get('platform')
+                for listing in listings:
+                    try:
+                        listing_platform = self._get_listing_platform(listing)
 
-                    if listing_platform == sold_platform:
-                        self._update_listing_sold(listing, parsed_email)
-                        logger.info(f"Updated {listing_platform} listing as sold")
-                    else:
-                        delist_result = self._delist_from_platform(listing, listing_platform)
-
-                        if delist_result['success']:
-                            self._update_listing_ended(listing)
-                            results['delisted'].append({
-                                'platform': listing_platform,
-                                'listing_id': str(listing['id']),
-                                'status': 'delisted',
-                            })
-                            logger.info(f"Delisted from {listing_platform}")
+                        if listing_platform == sold_platform:
+                            self._update_listing_sold(listing, parsed_email)
+                            logger.info(f"Updated {listing_platform} listing as sold")
                         else:
-                            error_msg = str(delist_result.get('error', '')).lower()
-                            already_ended_indicators = [
-                                'already been closed', 'already closed',
-                                'auction has been closed', 'listing has ended', 'no longer available',
-                            ]
-                            if any(indicator in error_msg for indicator in already_ended_indicators):
-                                logger.warning(f"{listing_platform} listing already ended on platform, syncing database status")
+                            delist_result = self._delist_from_platform(listing, listing_platform)
+
+                            if delist_result['success']:
                                 self._update_listing_ended(listing)
                                 results['delisted'].append({
                                     'platform': listing_platform,
                                     'listing_id': str(listing['id']),
-                                    'status': 'sync_ended',
+                                    'status': 'delisted',
                                 })
+                                logger.info(f"Delisted from {listing_platform}")
                             else:
-                                results['errors'].append({'platform': listing_platform, 'error': delist_result.get('error')})
-                                logger.error(f"Failed to delist from {listing_platform}: {delist_result.get('error')}")
+                                error_msg = str(delist_result.get('error', '')).lower()
+                                already_ended_indicators = [
+                                    'already been closed', 'already closed',
+                                    'auction has been closed', 'listing has ended', 'no longer available',
+                                ]
+                                if any(indicator in error_msg for indicator in already_ended_indicators):
+                                    logger.warning(f"{listing_platform} listing already ended on platform, syncing database status")
+                                    self._update_listing_ended(listing)
+                                    results['delisted'].append({
+                                        'platform': listing_platform,
+                                        'listing_id': str(listing['id']),
+                                        'status': 'sync_ended',
+                                    })
+                                else:
+                                    results['errors'].append({'platform': listing_platform, 'error': delist_result.get('error')})
+                                    logger.error(f"Failed to delist from {listing_platform}: {delist_result.get('error')}")
 
-                except Exception as e:
-                    logger.error(f"Error processing listing {listing['id']}: {e}")
-                    results['errors'].append({'listing_id': str(listing['id']), 'error': str(e)})
+                    except Exception as e:
+                        logger.error(f"Error processing listing {listing['id']}: {e}")
+                        results['errors'].append({'listing_id': str(listing['id']), 'error': str(e)})
 
             self.conn.commit()
             results['success'] = True
-            logger.info(f"Sale processed: Unit {unit['unit_code']}, Delisted from {len(results['delisted'])} platforms")
+            logger.info(f"Sale processed: Order {order['id']}, Delisted from {len(results['delisted'])} platforms")
 
         except Exception as e:
             self.conn.rollback()
@@ -135,54 +143,6 @@ class DelistService:
             results['errors'].append(str(e))
 
         return results
-
-    def _find_unit(self, parsed_email: Dict) -> Optional[dict]:
-        """Find unit by SKU first, then channel_listing_id fallback."""
-        platform = parsed_email.get('platform')
-        listing_id = parsed_email.get('listing_id')
-        order_id = parsed_email.get('order_id')
-
-        raw_sku = parsed_email.get('sku')
-        sku = str(raw_sku).strip().upper() if raw_sku else None
-
-        with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            if sku:
-                cur.execute("SELECT * FROM units WHERE unit_code = %s LIMIT 1", [sku])
-                unit = cur.fetchone()
-                if unit:
-                    logger.info(f"Found unit by SKU FIRST: {sku}")
-                    return dict(unit)
-
-            if listing_id:
-                cur.execute(
-                    """
-                    SELECT u.* FROM units u
-                    JOIN listing_units lu ON lu.unit_id = u.id
-                    JOIN listings l ON l.id = lu.listing_id
-                    WHERE l.channel_listing_id = %s
-                    LIMIT 1
-                    """,
-                    [listing_id],
-                )
-                unit = cur.fetchone()
-                if unit:
-                    logger.debug(f"Found unit by listing_id: {unit['unit_code']}")
-                    return dict(unit)
-
-        logger.warning(f"Unit not found for platform={platform}, listing_id={listing_id}, order_id={order_id}, sku={sku}")
-        return None
-
-    def _update_unit_sold(self, unit: dict, parsed_email: Dict):
-        with self.conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE units
-                SET status='sold', sold_at=%s, sold_price=%s, sold_platform=%s
-                WHERE id=%s
-                """,
-                [datetime.utcnow(), parsed_email.get('price'), parsed_email.get('platform'), unit['id']],
-            )
-        logger.debug(f"Unit {unit['unit_code']} marked as sold")
 
     def _find_unit_listings(self, unit_id) -> List[dict]:
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:

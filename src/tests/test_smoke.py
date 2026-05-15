@@ -34,6 +34,7 @@ MODULES = [
     "src.services.product_registry_service",
     "src.services.intake_service",
     "src.services.listing_service",
+    "src.services.order_allocation_service",
     "src.services.crosslisting.crosslist_service",
     "src.services.delisting.delist_service",
     "src.services.delisting.email_parser_service",

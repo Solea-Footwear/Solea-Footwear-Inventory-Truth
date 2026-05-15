@@ -21,6 +21,7 @@ services:
       - ./migrations/2026_05_14_epic1_product_columns.sql:/docker-entrypoint-initdb.d/06-epic1_product_columns.sql
       - ./migrations/2026_05_14_epic2_unit_sku_constraint.sql:/docker-entrypoint-initdb.d/07-epic2_unit_sku_constraint.sql
       - ./migrations/2026_05_14_epic3_channel_multi_qty.sql:/docker-entrypoint-initdb.d/08-epic3_channel_multi_qty.sql
+      - ./migrations/2026_05_15_epic4_order_allocations.sql:/docker-entrypoint-initdb.d/09-epic4_order_allocations.sql
     networks:
       - solea_network
     healthcheck:

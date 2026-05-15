@@ -22,6 +22,7 @@ from src.services.listing_service import (
     assign_unit_to_listing,
     end_listing,
 )
+from src.services.order_allocation_service import allocate_order
 
 from src.services.delisting.gmail_service import GmailService
 from src.services.delisting.email_parser_service import EmailParserService
@@ -1079,6 +1080,175 @@ def end_listing_route(listing_id):
     except Exception as exc:
         conn.rollback()
         logger.error(f"Error in end_listing_route: {exc}")
+        return jsonify({'error': str(exc)}), 500
+    finally:
+        release_conn(conn)
+
+
+# ============================================
+# ORDER ENDPOINTS
+# ============================================
+
+@app.route('/api/orders', methods=['GET'])
+def list_orders():
+    """List orders with optional filters: platform, status, needs_reconciliation, from_date, to_date, limit."""
+    conn = acquire_conn()
+    try:
+        platform = request.args.get('platform')
+        status = request.args.get('status')
+        needs_recon = request.args.get('needs_reconciliation')
+        from_date = request.args.get('from_date')
+        to_date = request.args.get('to_date')
+        limit = min(int(request.args.get('limit', 100)), 500)
+
+        conditions = []
+        params = []
+        if platform:
+            conditions.append("o.platform = %s")
+            params.append(platform)
+        if status:
+            conditions.append("o.status = %s")
+            params.append(status)
+        if needs_recon is not None:
+            conditions.append("o.needs_reconciliation = %s")
+            params.append(needs_recon.lower() in ('true', '1', 'yes'))
+        if from_date:
+            conditions.append("o.created_at >= %s")
+            params.append(from_date)
+        if to_date:
+            conditions.append("o.created_at <= %s")
+            params.append(to_date)
+
+        where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
+        params.append(limit)
+
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                f"""
+                SELECT o.*, COUNT(oa.id) AS allocation_count
+                FROM orders o
+                LEFT JOIN order_allocations oa ON oa.order_id = o.id
+                {where}
+                GROUP BY o.id
+                ORDER BY o.created_at DESC
+                LIMIT %s
+                """,
+                params,
+            )
+            orders = [dict(r) for r in cur.fetchall()]
+
+        for o in orders:
+            for k in ('created_at', 'updated_at', 'allocated_at', 'shipped_at'):
+                if o.get(k) and hasattr(o[k], 'isoformat'):
+                    o[k] = o[k].isoformat()
+            o['id'] = str(o['id'])
+            if o.get('sale_price') is not None:
+                o['sale_price'] = float(o['sale_price'])
+
+        return jsonify({'orders': orders, 'total': len(orders)})
+    except Exception as exc:
+        logger.error(f"Error in list_orders: {exc}")
+        return jsonify({'error': str(exc)}), 500
+    finally:
+        release_conn(conn)
+
+
+@app.route('/api/orders/<order_id>', methods=['GET'])
+def get_order(order_id):
+    """Get a single order with its allocations and unit details."""
+    conn = acquire_conn()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM orders WHERE id = %s", [order_id])
+            order = cur.fetchone()
+        if not order:
+            return jsonify({'error': 'Order not found'}), 404
+
+        order = dict(order)
+        for k in ('created_at', 'updated_at', 'allocated_at', 'shipped_at'):
+            if order.get(k) and hasattr(order[k], 'isoformat'):
+                order[k] = order[k].isoformat()
+        order['id'] = str(order['id'])
+        if order.get('sale_price') is not None:
+            order['sale_price'] = float(order['sale_price'])
+
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT oa.id, oa.order_id, oa.unit_id, oa.listing_id, oa.allocated_at,
+                       u.unit_code, u.status AS unit_status, u.sold_price
+                FROM order_allocations oa
+                JOIN units u ON u.id = oa.unit_id
+                WHERE oa.order_id = %s
+                """,
+                [order_id],
+            )
+            allocations = []
+            for r in cur.fetchall():
+                a = dict(r)
+                a['id'] = str(a['id'])
+                a['order_id'] = str(a['order_id'])
+                a['unit_id'] = str(a['unit_id'])
+                if a.get('listing_id'):
+                    a['listing_id'] = str(a['listing_id'])
+                if a.get('allocated_at') and hasattr(a['allocated_at'], 'isoformat'):
+                    a['allocated_at'] = a['allocated_at'].isoformat()
+                if a.get('sold_price') is not None:
+                    a['sold_price'] = float(a['sold_price'])
+                allocations.append(a)
+
+        return jsonify({'order': order, 'allocations': allocations})
+    except Exception as exc:
+        logger.error(f"Error in get_order: {exc}")
+        return jsonify({'error': str(exc)}), 500
+    finally:
+        release_conn(conn)
+
+
+@app.route('/api/orders/<order_id>/ship', methods=['POST'])
+def ship_order(order_id):
+    """Mark an order as shipped and update all allocated units to 'shipped'."""
+    conn = acquire_conn()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM orders WHERE id = %s", [order_id])
+            order = cur.fetchone()
+        if not order:
+            return jsonify({'error': 'Order not found'}), 404
+        if order['status'] != 'allocated':
+            return jsonify({'error': f"Cannot ship order with status '{order['status']}'"}), 422
+
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "UPDATE orders SET status = 'shipped', shipped_at = %s WHERE id = %s RETURNING *",
+                [now, order_id],
+            )
+            updated_order = dict(cur.fetchone())
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE units SET status = 'shipped'
+                WHERE id IN (
+                    SELECT unit_id FROM order_allocations WHERE order_id = %s
+                )
+                """,
+                [order_id],
+            )
+
+        conn.commit()
+        shipped_at = updated_order['shipped_at']
+        return jsonify({
+            'shipped': True,
+            'order_id': str(updated_order['id']),
+            'shipped_at': shipped_at.isoformat() if shipped_at and hasattr(shipped_at, 'isoformat') else None,
+        })
+    except Exception as exc:
+        conn.rollback()
+        logger.error(f"Error in ship_order: {exc}")
         return jsonify({'error': str(exc)}), 500
     finally:
         release_conn(conn)
