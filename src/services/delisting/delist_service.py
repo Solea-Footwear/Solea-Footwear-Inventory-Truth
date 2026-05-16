@@ -183,19 +183,10 @@ class DelistService:
 
     def _delist_from_platform(self, listing: dict, platform: str) -> Dict:
         if platform == 'ebay':
-            print(f"delisting from {platform}")
-            print(listing['channel_listing_id'])
             from src.integrations.ebay.ebay_delist import delist_ebay_item
             return delist_ebay_item(listing['channel_listing_id'])
 
-        elif platform in ['poshmark', 'mercari']:
-            print(f"delisting from {platform}")
-            print(listing['channel_listing_id'])
-            from src.integrations.selenium.selenium_delist import delist_item
-            return delist_item(platform, listing['channel_listing_id'])
-
-        else:
-            return {'success': False, 'error': f'Unknown platform: {platform}'}
+        return {'success': False, 'error': f'Unknown platform: {platform}'}
 
 
 # ---------------------------------------------------------------------------

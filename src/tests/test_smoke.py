@@ -28,20 +28,16 @@ MODULES = [
     "src.services.template_service",
     "src.services.audit_service",
     "src.services.bulk_import_service",
-    "src.services.ai_parser_service",
     "src.services.image_handler",
     "src.services.product_id_service",
     "src.services.product_registry_service",
     "src.services.intake_service",
     "src.services.listing_service",
     "src.services.order_allocation_service",
-    "src.services.crosslisting.crosslist_service",
     "src.services.delisting.delist_service",
     "src.services.delisting.email_parser_service",
     "src.services.delisting.gmail_service",
     "src.services.delisting.ebay_email_parser",
-    "src.services.delisting.mercari_email_parser",
-    "src.services.delisting.poshmark_email_parser",
     "src.services.delisting.reconciliation_service",
     "src.services.returns",
     "src.services.returns.return_service",
@@ -53,13 +49,8 @@ MODULES = [
     "src.integrations.ebay.ebay_delist",
     "src.integrations.ebay.ebay_oauth",
     "src.integrations.ebay.ebay_token_store",
-    "src.integrations.mercari.mercari_lister",
-    "src.integrations.poshmark.poshmark_lister",
-    "src.integrations.selenium.selenium_delist",
     # jobs
     "src.jobs.scheduler",
-    # frontend
-    "src.frontend.ui",
 ]
 
 

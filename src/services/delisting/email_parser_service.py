@@ -12,10 +12,7 @@ import psycopg2.extras
 from src.backend.db.database import acquire_conn, release_conn
 
 
-# ebay email parser
 from src.services.delisting.ebay_email_parser import EbayEmailParser
-from src.services.delisting.poshmark_email_parser import PoshmarkEmailParser
-from src.services.delisting.mercari_email_parser import MercariEmailParser
 
 
 
@@ -31,14 +28,7 @@ class EmailParserService:
             logger.warning("ANTHROPIC_API_KEY not set")
         self.client = anthropic.Anthropic(api_key=self.api_key) if self.api_key else None
         
-        # Init ebay email parser
         self.ebay_parser = EbayEmailParser()
-
-        # Init poshmark email parser
-        self.poshmark_parser = PoshmarkEmailParser()
-
-        # init mercari email parser
-        self.mercari_parser = MercariEmailParser()
       
     
     def parse_sale_email(self, email_data: Dict) -> List[Dict]:
@@ -64,68 +54,6 @@ class EmailParserService:
                 result = self.ebay_parser.parse(email_data)
                 return result if result else []
 
-            # Poshmark - returns list (handles bundles)
-            if platform == 'poshmark':
-                result = self.poshmark_parser.parse(email_data)
-                return result if result else []  # Already a list
-
-            # Mercari - returns single item, wrap in list
-            if platform == 'mercari':
-                result = self.mercari_parser.parse(email_data)
-
-                if not result:
-                    return []
-
-                inserted = self._insert_marketplace_event(result)
-
-                if not inserted:
-                    logger.info(
-                        "duplicate_mercari_event_skipped",
-                        extra={"message_id": result["message_id"]}
-                    )
-                    return []
-
-                sku = self._resolve_sku_from_mercari_listing_id(
-                    result["external_listing_id"]
-                )
-
-                if not sku:
-                    logger.error(
-                        "mercari_sale_cannot_resolve_sku",
-                        extra={"external_listing_id": result["external_listing_id"]}
-                    )
-
-                    result["sku"] = None
-                    result["needs_reconciliation"] = True
-                    result["reconciliation_reason"] = "mercari_listing_id_not_mapped_to_sku"
-
-                    self._mark_marketplace_event_needs_reconciliation(
-                        result["platform"],
-                        result["message_id"],
-                        result["reconciliation_reason"]
-                    )
-
-                    return [result]
-
-                result["sku"] = sku
-
-                self._update_marketplace_event_sku(
-                    result["platform"],
-                    result["message_id"],
-                    sku
-                )
-                
-                logger.info(
-                    "mercari_sale_processed",
-                    extra={
-                        "listing_id": result["external_listing_id"],
-                        "sku": sku,
-                        "price": result.get("price")
-                    }
-                )
-
-                return [result]
-            # ! uncomment below code if you want to use ai and comment above blocks for specific platforms.
             # Try AI parsing first
             print("Using AI to fetch email parsing result...")
             if self.client:
@@ -219,31 +147,6 @@ class EmailParserService:
         finally:
             release_conn(conn)
 
-    def _resolve_sku_from_mercari_listing_id(self, mercari_listing_id: str) -> Optional[str]:
-        conn = acquire_conn()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT u.unit_code AS sku
-                    FROM listings l
-                    JOIN channels c ON c.id = l.channel_id
-                    JOIN listing_units lu ON lu.listing_id = l.id
-                    JOIN units u ON u.id = lu.unit_id
-                    WHERE LOWER(c.name) = 'mercari'
-                      AND l.channel_listing_id = %s
-                    LIMIT 1
-                    """,
-                    [mercari_listing_id]
-                )
-                row = cur.fetchone()
-            return row[0] if row else None
-        except Exception as e:
-            logger.error("sku_resolution_failed mercari_listing_id=%s error=%s", mercari_listing_id, e)
-            return None
-        finally:
-            release_conn(conn)
-            
     def _parse_with_ai(self, email_data: Dict) -> Optional[Dict]:
         """
         Parse email using Claude AI
@@ -340,11 +243,7 @@ Only return valid JSON. If a field is not found, use null.
         
         if platform == 'ebay':
             return self._parse_ebay_email(subject, body, email_data.get('message_id'))
-        elif platform == 'poshmark':
-            return self._parse_poshmark_email(subject, body, email_data.get('message_id'))
-        elif platform == 'mercari':
-            return self._parse_mercari_email(subject, body, email_data.get('message_id'))
-        
+
         return None
     
     def _parse_ebay_email(self, subject: str, body: str, message_id: str) -> Optional[Dict]:
@@ -400,84 +299,3 @@ Only return valid JSON. If a field is not found, use null.
             logger.error(f"Error parsing eBay email: {e}")
             return None
     
-    def _parse_poshmark_email(self, subject: str, body: str, message_id: str) -> Optional[Dict]:
-        """Parse Poshmark sale email"""
-        try:
-            result = {
-                'platform': 'poshmark',
-                'message_id': message_id,
-                'sku': None,
-                'title': None,
-                'price': None,
-                'order_id': None
-            }
-            
-            # Poshmark emails usually have title in subject
-            # "Congrats! You sold [ITEM NAME]"
-            title_match = re.search(r'sold\s+(.+)', subject, re.IGNORECASE)
-            if title_match:
-                result['title'] = title_match.group(1).strip()
-            
-            # Extract SKU from title or body (if seller includes it)
-            sku_patterns = [
-                r'SKU[:\s]+([A-Z0-9\-]+)',
-                r'\(([A-Z0-9\-]+)\)',  # SKU in parentheses
-            ]
-            
-            for pattern in sku_patterns:
-                match = re.search(pattern, body, re.IGNORECASE)
-                if match:
-                    result['sku'] = match.group(1).strip()
-                    break
-            
-            # Extract price
-            price_match = re.search(r'\$([0-9,]+\.[0-9]{2})', body)
-            if price_match:
-                result['price'] = float(price_match.group(1).replace(',', ''))
-            
-            return result if result['sku'] or result['title'] else None
-            
-        except Exception as e:
-            logger.error(f"Error parsing Poshmark email: {e}")
-            return None
-    
-    def _parse_mercari_email(self, subject: str, body: str, message_id: str) -> Optional[Dict]:
-        """Parse Mercari sale email"""
-        try:
-            result = {
-                'platform': 'mercari',
-                'message_id': message_id,
-                'sku': None,
-                'title': None,
-                'price': None,
-                'order_id': None
-            }
-            
-            # Mercari subject: "You made a sale!"
-            # Title usually in body
-            title_match = re.search(r'Item:[:\s]+(.+)', body, re.IGNORECASE)
-            if title_match:
-                result['title'] = title_match.group(1).strip().split('\n')[0]
-            
-            # Extract SKU
-            sku_patterns = [
-                r'SKU[:\s]+([A-Z0-9\-]+)',
-                r'\(([A-Z0-9\-]+)\)',
-            ]
-            
-            for pattern in sku_patterns:
-                match = re.search(pattern, body, re.IGNORECASE)
-                if match:
-                    result['sku'] = match.group(1).strip()
-                    break
-            
-            # Extract price
-            price_match = re.search(r'\$([0-9,]+\.[0-9]{2})', body)
-            if price_match:
-                result['price'] = float(price_match.group(1).replace(',', ''))
-            
-            return result if result['sku'] or result['title'] else None
-            
-        except Exception as e:
-            logger.error(f"Error parsing Mercari email: {e}")
-            return None

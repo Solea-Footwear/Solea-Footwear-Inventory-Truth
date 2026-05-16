@@ -24,58 +24,9 @@ from src.services.returns.email_processing_service import EmailProcessingService
 
 logger = logging.getLogger(__name__)
 
-from src.services.crosslisting.crosslist_service import CrosslistService
-
-
 from dotenv import load_dotenv
 
 load_dotenv()
-
-def auto_crosslist_check():
-    """
-    Check for units that need cross-listing
-    This runs after eBay sync to detect new listings
-    """
-    logger.info("Checking for units needing cross-listing...")
-    
-    conn = acquire_conn()
-
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT id, unit_code, status FROM units WHERE status = 'listed'")
-            listed_units = cur.fetchall()
-
-        if not listed_units:
-            logger.debug("No listed units found")
-            return
-
-        logger.info(f"Found {len(listed_units)} listed units, checking cross-listing status...")
-
-        crosslist_service = CrosslistService(conn)
-
-        total_checked = 0
-        total_created = 0
-
-        for unit in listed_units:
-            try:
-                result = crosslist_service.check_and_crosslist(unit['id'])
-                total_checked += 1
-
-                if result.get('created_listings'):
-                    total_created += len(result['created_listings'])
-                    logger.info(f"Unit {unit['unit_code']}: Created {len(result['created_listings'])} listings")
-
-            except Exception as e:
-                logger.error(f"Error cross-listing unit {unit['unit_code']}: {e}")
-
-        logger.info(f"Auto cross-listing complete: Checked {total_checked} units, created {total_created} listings")
-
-    except Exception as e:
-        logger.error(f"Error in auto_crosslist_check: {e}")
-
-    finally:
-        release_conn(conn)
-
 
 def check_return_emails():
     """
@@ -629,46 +580,6 @@ class SyncScheduler:
         )
         
         logger.info(f"Email monitoring started - checking every {email_check_interval} minutes")
-
-
-    def start_crosslist_monitoring(self):
-        """Start cross-listing monitoring"""
-        
-        import os
-        from datetime import datetime, timedelta
-
-        crosslist_interval = int(os.getenv('CROSSLIST_CHECK_INTERVAL_MINUTES', '60'))
-
-        print("CrossListing Service Environment Variables...")
-        print("CrossList Check Interval Minutes",crosslist_interval)
-
-        # First run after 5 seconds, then every X minutes
-        start_time = datetime.now() + timedelta(seconds=5)
-
-        # # Add job
-        # self.scheduler.add_job(
-        #     func=auto_crosslist_check,
-        #     trigger=IntervalTrigger(minutes=crosslist_interval),
-        #     id='crosslist_check_job',
-        #     name='Cross-listing Check Job',
-        #     replace_existing=True,
-        #     max_instances=1
-        # )
-
-        # Add job with immediate first run
-        self.scheduler.add_job(
-            func=auto_crosslist_check,
-            trigger='interval',  # Changed from IntervalTrigger to 'interval'
-            minutes=crosslist_interval,
-            id='crosslist_check_job',
-            name='Cross-listing Check Job',
-            replace_existing=True,
-            max_instances=1,
-            next_run_time=start_time  # Runs after 5 seconds
-        )
-    
-        
-        logger.info(f"Cross-listing monitoring started - checking every {crosslist_interval} minutes")
 
 
     def start_return_monitoring(self):
